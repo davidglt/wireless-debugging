@@ -221,7 +221,7 @@ This option does not keep a network connection alive, freeze the port, prevent e
 
 Enable wireless debugging, discover the current connection port and reconnect using the same client identity. If the connection is unavailable, first check the switch, network approval and current port; do not assume pairing has been lost. Pair again only if authorization is missing or rejected.
 
-For the integration example, `wireless-reboot` performs discovery and connection, but it will actually reboot the phone as soon as it connects. Do not use it merely as a harmless connection test. Use the manual `get-state` command above for a non-rebooting check.
+For the integration example, `reboot` (installed at `$HOME/bin/reboot`) performs discovery and connection, but it will actually reboot the phone as soon as it connects. Do not use it merely as a harmless connection test. Use the manual `get-state` command above for a non-rebooting check.
 
 Official background: [Android Debug Bridge wireless pairing](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi) and [Android authorization-timeout implementation](https://android.googlesource.com/platform/packages/apps/Settings/+/master/src/com/android/settings/development/AdbAuthorizationTimeoutPreferenceController.java). Newer Android features described in upstream documentation are not necessarily available on Android 13.
 
@@ -267,21 +267,31 @@ python -m venv "$HOME/.venvs/adb-discovery"
 "$HOME/.venvs/adb-discovery/bin/python" -m pip install zeroconf
 ```
 
-From the repository root, install the command in the user-local directory:
+From the repository root, install the command in `$HOME/bin`:
 
 ```sh
-mkdir -p "$HOME/.local/bin"
-install -m 700 scripts/wireless-debugging "$HOME/.local/bin/wireless-debugging"
+mkdir -p "$HOME/bin"
+install -m 700 scripts/wireless-debugging "$HOME/bin/wireless-debugging"
 ```
 
-If `$HOME/.local/bin` is not on your `PATH`, add it (for example to `~/.bashrc`) and reload the shell:
+If `$HOME/bin` is not on your `PATH`, add it (for example to `~/.bashrc`) and reload the shell:
 
 ```sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+export PATH="$HOME/bin:$PATH"
 ```
 
 This replaces an existing command at that path. Back up a customized version first.
+
+**Migrating from an earlier install location.** Inspect existing copies of the commands before changing anything; this only lists them and does not delete or run them:
+
+```sh
+type -a wireless-debugging
+type -a wireless-reboot
+type -a reboot
+```
+
+Remove or keep older copies (for example under `$HOME/.local/bin` or `$PREFIX/bin`) manually, after reviewing the output. The installer above never deletes anything.
 
 Create the private token file using Bash. Copy the current 64-character token displayed in the app and enter it at the prompt, not as part of a shell command:
 
@@ -338,7 +348,7 @@ Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operati
 
 On app failure (rejected token, missing WRITE_SECURE_SETTINGS, app-request timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
-**Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall the script with the `install -m 700` command above. Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
+**Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall the script with the `install -m 700` command above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
 ### Control interface
 
@@ -366,16 +376,18 @@ Install runtime dependencies and the isolated discovery environment in Termux:
 pkg install android-tools python coreutils
 python -m venv "$HOME/.venvs/adb-discovery"
 "$HOME/.venvs/adb-discovery/bin/python" -m pip install zeroconf
-mkdir -p "$HOME/.local/bin"
-install -m 700 examples/reboot.sh "$HOME/.local/bin/wireless-reboot"
+mkdir -p "$HOME/bin"
+install -m 700 examples/reboot.sh "$HOME/bin/reboot"
 ```
+
+`$HOME/bin/reboot` is this project's command (the source file stays `examples/reboot.sh`). With `$HOME/bin` early on `PATH` it may shadow another `reboot`; run `type -a reboot` to check, and use the explicit path `$HOME/bin/reboot` where disambiguation matters.
 
 The example uses `adb`, `timeout`, the installed `wireless-debugging` wrapper, and Python with `zeroconf` at `$HOME/.venvs/adb-discovery/bin/python`. Configure the app permission, Termux special access and private token first. An authorized initial ADB connection is still required for the permission grant.
 
 Save your work before running:
 
 ```sh
-wireless-reboot
+"$HOME/bin/reboot"
 ```
 
 This command actually reboots the phone once connected. It does not ask for a final reboot confirmation. Publishing, downloading or installing the script does not execute it.

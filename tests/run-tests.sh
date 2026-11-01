@@ -272,4 +272,24 @@ for N in 1 2 3 4 5 6 7 8; do
 done
 (( FAILED )) || echo 'ok: concurrent requests'
 
+# Installation instruction consistency (text only; no install is performed).
+DOC_FAILED=0
+doc_check() { # description, condition result
+    if ! "${@:2}"; then echo "FAIL: docs: $1" >&2; DOC_FAILED=1; FAILED=1; else echo "ok: docs: $1"; fi
+}
+README="$ROOT/README.md"
+SETUP="$PKG/SetupActivity.java"
+doc_check 'README installs wrapper to $HOME/bin' \
+    grep -Fq 'install -m 700 scripts/wireless-debugging "$HOME/bin/wireless-debugging"' "$README"
+doc_check 'README installs example as $HOME/bin/reboot' \
+    grep -Fq 'install -m 700 examples/reboot.sh "$HOME/bin/reboot"' "$README"
+doc_check 'README suggests type -a for migration' grep -Fq 'type -a reboot' "$README"
+doc_check 'README keeps reboot warning' grep -Fq 'actually reboot the phone' "$README"
+doc_check 'README install/PATH lines avoid obsolete paths' \
+    bash -c '! grep -E "^(install -m|echo .export PATH|export PATH)" "$1" | grep -Eq "\.local/bin|PREFIX/bin|wireless-reboot"' _ "$README"
+doc_check 'README has no wireless-reboot command' \
+    bash -c '! grep -Fq "wireless-reboot" <(sed "/^\*\*Migrating/,/^Remove or keep/d" "$1")' _ "$README"
+doc_check 'SetupActivity points to $HOME/bin' grep -Fq '$HOME/bin' "$SETUP"
+doc_check 'SetupActivity has no $PREFIX/bin' bash -c '! grep -Fq "\$PREFIX/bin" "$1"' _ "$SETUP"
+
 exit "$FAILED"
