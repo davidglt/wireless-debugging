@@ -34,6 +34,7 @@ mkdir -p \
     "$BUILD/classes" \
     "$BUILD/dex" \
     "$BUILD/generated" \
+    "$BUILD/assets" \
     "$PROJECT/dist" \
     "$SIGNING"
 
@@ -51,7 +52,11 @@ if [[ -d "$PROJECT/res" ]] &&
     RESOURCE_ARGS+=("$BUILD/compiled-resources.zip")
 fi
 
+# Bundle the repository LICENSE as an offline asset for the About screen.
+cp "$PROJECT/LICENSE" "$BUILD/assets/LICENSE.txt"
+
 aapt2 link \
+    -A "$BUILD/assets" \
     -o "$BUILD/resources.apk" \
     -I "$PLATFORM" \
     --manifest "$PROJECT/AndroidManifest.xml" \

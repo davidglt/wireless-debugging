@@ -7,16 +7,32 @@
 package local.termux.wirelessdebugging;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.method.LinkMovementMethod;
+import android.text.style.ClickableSpan;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-/** About screen: attribution, installed version and project link. */
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
+/** About screen: attribution, installed version, license and repository. */
 public final class AboutActivity extends Activity {
+    /** Asset packaged by build.sh from the repository LICENSE file. */
+    static final String LICENSE_ASSET = "LICENSE.txt";
+    private static final String LICENSE_PREFIX = "License: ";
+    private static final String LICENSE_LINK = "GNU GPL v3 or later";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -32,12 +48,24 @@ public final class AboutActivity extends Activity {
 
         AppSupport.addText(this, layout,
                 "\nVersion: " + AppSupport.installedVersion(this)
-                + "\nAuthor: David González López-Tercero"
-                + "\nCopyright (C) 2026 David González López-Tercero"
-                + "\nLicense: GNU GPL v3 or later\n\n"
-                + AppSupport.PROJECT_URL + "\n", true);
+                + "\nCopyright \u00a9 2026 David Gonz\u00e1lez "
+                + "L\u00f3pez-Tercero", true);
 
-        AppSupport.addButton(this, layout, "Open project page", () -> {
+        SpannableString license =
+                new SpannableString(LICENSE_PREFIX + LICENSE_LINK);
+        license.setSpan(new ClickableSpan() {
+            @Override
+            public void onClick(View widget) {
+                showLicense();
+            }
+        }, LICENSE_PREFIX.length(), license.length(),
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        TextView licenseView = AppSupport.addText(this, layout, "", false);
+        licenseView.setText(license);
+        licenseView.setMovementMethod(LinkMovementMethod.getInstance());
+        licenseView.setPadding(0, 0, 0, padding);
+
+        AppSupport.addButton(this, layout, "Repository", () -> {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW,
                         Uri.parse(AppSupport.PROJECT_URL)));
@@ -50,5 +78,36 @@ public final class AboutActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.addView(layout);
         setContentView(scroll);
+    }
+
+    /** Shows the bundled GPL text; no network access is needed. */
+    private void showLicense() {
+        String text;
+        try (InputStream in = getAssets().open(LICENSE_ASSET)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                out.write(buffer, 0, count);
+            }
+            text = new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } catch (IOException error) {
+            AppSupport.toast(this, "The license text is unavailable.");
+            return;
+        }
+
+        int padding = AppSupport.dp(this, 16);
+        TextView body = new TextView(this);
+        body.setText(text);
+        body.setTextIsSelectable(true);
+        body.setPadding(padding, padding, padding, padding);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(body);
+
+        new AlertDialog.Builder(this)
+                .setTitle("GNU General Public License v3")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .show();
     }
 }
