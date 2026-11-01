@@ -394,8 +394,8 @@ doc_check 'README documents installed poweroff command' \
     grep -Fq 'installed as `$HOME/bin/poweroff` by `make install`' "$README"
 doc_check 'README explains shutdown disconnects the session' \
     grep -Fq 'disconnects SSH and DeX' "$README"
-doc_check 'README discloses Samsung shutdown testing limitation' \
-    grep -Fq 'Actual shutdown on the reported Samsung device has not been tested' "$README"
+doc_check 'README distinguishes mocked host checks from real device shutdown' \
+    grep -Fq 'Host checks use mocked ADB and never shut down a device' "$README"
 doc_check 'README suggests type -a for migration' grep -Fq 'type -a reboot' "$README"
 doc_check 'README keeps reboot warning' grep -Fq 'actually reboot the phone' "$README"
 doc_check 'README install/PATH lines avoid obsolete paths' \
