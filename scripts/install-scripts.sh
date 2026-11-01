@@ -26,8 +26,8 @@ if [[ -z "$DEST" ]]; then
 fi
 
 # Source path, installed command name.
-SOURCES=("$ROOT/scripts/wireless-debugging" "$ROOT/scripts/adb-local-check" "$ROOT/examples/reboot.sh")
-NAMES=(wireless-debugging adb-local-check reboot)
+SOURCES=("$ROOT/scripts/wireless-debugging" "$ROOT/scripts/adb-local-check" "$ROOT/examples/reboot.sh" "$ROOT/examples/poweroff.sh")
+NAMES=(wireless-debugging adb-local-check reboot poweroff)
 
 for i in "${!SOURCES[@]}"; do
     if [[ ! -f "${SOURCES[$i]}" || ! -r "${SOURCES[$i]}" ]]; then
