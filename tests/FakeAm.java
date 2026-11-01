@@ -10,7 +10,8 @@ package local.termux.wirelessdebugging;
  * Test double for "am broadcast": runs the real ControlProtocol against a
  * file-backed setting and prints output in the format of am. Test only.
  * Environment: FAKE_AM_TOKEN, FAKE_AM_STATE (file), FAKE_AM_PERMISSION=1|0,
- * FAKE_AM_DELAY (seconds), FAKE_AM_MODE=garbage|wrongnonce.
+ * FAKE_AM_DELAY (seconds), FAKE_AM_MODE=garbage|wrongnonce|oldproto,
+ * FAKE_AM_VERSION.
  */
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -35,6 +36,11 @@ public final class FakeAm {
             System.out.println("Broadcast completed: result=0");
             return;
         }
+        if ("oldproto".equals(mode)) {
+            System.out.println("Broadcast completed: result=1, data=\"wd1 nonce="
+                    + nonce + " status=ok op=" + op + " setting=1\"");
+            return;
+        }
         String delay = System.getenv("FAKE_AM_DELAY");
         if (delay != null) {
             Thread.sleep(Long.parseLong(delay) * 1000);
@@ -53,6 +59,15 @@ public final class FakeAm {
                 } catch (Exception e) {
                     return -1;
                 }
+            }
+
+            public String versionName() {
+                String v = System.getenv("FAKE_AM_VERSION");
+                return v != null ? v : "1.2.3";
+            }
+
+            public long versionCode() {
+                return 12;
             }
 
             public boolean writeSetting(boolean enabled) {

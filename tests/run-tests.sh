@@ -56,6 +56,20 @@ expect on 0 'setting \(observed\): ON' '^$' -- "${CMD[@]}" on
 expect status-after-on 0 'observed\): ON' '^$' -- "${CMD[@]}" status
 expect off 0 'setting \(observed\): OFF' '^$' -- "${CMD[@]}" off
 expect reachability-note 0 'ADB reachability is not verified' '^$' -- "${CMD[@]}" status
+expect status-version 0 'App version: 1.2.3 \(code 12\)' '^$' -- "${CMD[@]}" status
+expect on-version 0 'App version: 1.2.3 \(code 12\)' '^$' -- "${CMD[@]}" on
+echo 0 > "$WORK/state"
+expect version 0 '^App version: 1.2.3 \(code 12\)$' '^$' -- "${CMD[@]}" --version
+if [[ "$(cat "$WORK/state")" != 0 ]]; then
+    echo 'FAIL: --version changed the setting' >&2; FAILED=1
+fi
+FAKE_AM_VERSION='' expect version-unknown 1 '^$' 'did not report its installed version' -- "${CMD[@]}" --version
+FAKE_AM_MODE=oldproto expect version-incompatible 1 '^$' 'incompatible protocol' -- "${CMD[@]}" --version
+FAKE_AM_MODE=oldproto expect status-incompatible 1 '^$' 'incompatible protocol' -- "${CMD[@]}" status
+FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" \
+    expect version-invalid-token 1 '^$' 'token was rejected' -- "${CMD[@]}" --version
+FAKE_AM_DELAY=3 WIRELESS_DEBUGGING_TIMEOUT=1 \
+    expect version-timeout 1 '^$' 'no response within' -- "${CMD[@]}" --version
 expect bad-usage 1 '^$' 'Usage' -- "${CMD[@]}" reboot
 
 FAKE_AM_PERMISSION=0 expect missing-permission 1 '^$' 'WRITE_SECURE_SETTINGS' -- "${CMD[@]}" on

@@ -24,6 +24,10 @@ final class ControlProtocol {
         int readSetting();
 
         boolean writeSetting(boolean enabled);
+
+        String versionName();
+
+        long versionCode();
     }
 
     static final class Response {
@@ -58,10 +62,16 @@ final class ControlProtocol {
         }
 
         try {
+            if ("version".equals(operation)) {
+                return new Response(RESULT_OK, "wd2 nonce=" + echo
+                        + " status=ok op=version" + version(backend));
+            }
+
             boolean permission = backend.hasPermission();
 
             if ("status".equals(operation)) {
-                return ok(echo, operation, backend.readSetting(), permission);
+                return ok(echo, operation, backend.readSetting(), permission,
+                        version(backend));
             }
             if ("on".equals(operation) || "off".equals(operation)) {
                 if (!permission) {
@@ -74,7 +84,7 @@ final class ControlProtocol {
                     return error(echo, "write_failed", operation, observed,
                             true);
                 }
-                return ok(echo, operation, observed, true);
+                return ok(echo, operation, observed, true, version(backend));
             }
             return error(echo, "invalid_operation");
         } catch (RuntimeException failure) {
@@ -82,26 +92,41 @@ final class ControlProtocol {
         }
     }
 
+    static String cleanVersion(String name) {
+        if (name == null || name.isEmpty()) {
+            return "unknown";
+        }
+        String cleaned = name.replaceAll("[^A-Za-z0-9._+-]", "_");
+        return cleaned.length() > 40 ? cleaned.substring(0, 40) : cleaned;
+    }
+
+    /** Version fields read from package metadata, never hardcoded. */
+    private static String version(Backend backend) {
+        return " version=" + cleanVersion(backend.versionName())
+                + " version_code=" + backend.versionCode();
+    }
+
     private static String setting(int value) {
         return value == 1 ? "1" : value == 0 ? "0" : "unknown";
     }
 
     private static Response ok(String nonce, String operation, int observed,
-            boolean permission) {
-        return new Response(RESULT_OK, "wd1 nonce=" + nonce
+            boolean permission, String version) {
+        return new Response(RESULT_OK, "wd2 nonce=" + nonce
                 + " status=ok op=" + operation
                 + " setting=" + setting(observed)
-                + " permission=" + (permission ? "granted" : "denied"));
+                + " permission=" + (permission ? "granted" : "denied")
+                + version);
     }
 
     private static Response error(String nonce, String reason) {
-        return new Response(RESULT_ERROR, "wd1 nonce=" + nonce
+        return new Response(RESULT_ERROR, "wd2 nonce=" + nonce
                 + " status=error error=" + reason);
     }
 
     private static Response error(String nonce, String reason,
             String operation, int observed, boolean permission) {
-        return new Response(RESULT_ERROR, "wd1 nonce=" + nonce
+        return new Response(RESULT_ERROR, "wd2 nonce=" + nonce
                 + " status=error error=" + reason
                 + " op=" + operation
                 + " setting=" + setting(observed)

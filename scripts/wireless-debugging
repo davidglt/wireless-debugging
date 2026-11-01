@@ -10,14 +10,15 @@ OPERATION="${1:-}"
 TOKEN_FILE="$HOME/.config/wireless-debugging/token"
 
 if (( $# != 1 )); then
-    echo "Usage: wireless-debugging {on|off|status}" >&2
+    echo "Usage: wireless-debugging {on|off|status|--version}" >&2
     exit 1
 fi
 
 case "$OPERATION" in
     on|off|status) ;;
+    --version) OPERATION="version" ;;
     *)
-        echo "Usage: wireless-debugging {on|off|status}" >&2
+        echo "Usage: wireless-debugging {on|off|status|--version}" >&2
         exit 1
         ;;
 esac
@@ -80,7 +81,13 @@ if (( STATUS != 0 )); then
     exit 1
 fi
 
-RESPONSE_RE='wd1 nonce=([0-9a-f]{32}|none)( [a-z_]+=[a-z0-9_]+)*'
+RESPONSE_RE='wd2 nonce=([0-9a-f]{32}|none)( [a-z_]+=[A-Za-z0-9_.+-]+)*'
+OTHER_RE='wd[0-9]+ nonce='
+
+if [[ ! "$OUTPUT" =~ $RESPONSE_RE && "$OUTPUT" =~ $OTHER_RE ]]; then
+    echo "Error: the installed app uses an incompatible protocol; reinstall the matching APK." >&2
+    exit 1
+fi
 
 if [[ ! "$OUTPUT" =~ $RESPONSE_RE ]]; then
     echo "Error: no valid response from the app (is it installed, opened once, and up to date?)." >&2
@@ -120,7 +127,7 @@ if [[ "$(field status)" != "ok" ]]; then
         unauthorized) MESSAGE="control token was rejected by the app" ;;
         permission_denied) MESSAGE="WRITE_SECURE_SETTINGS has not been granted" ;;
         write_failed) MESSAGE="the system setting could not be updated" ;;
-        invalid_operation) MESSAGE="operation rejected by the app" ;;
+        invalid_operation) MESSAGE="operation rejected by the app (incompatible app version?)" ;;
         *) MESSAGE="request failed (${ERROR:-unknown})" ;;
     esac
     printf 'Error: %s.\n' "$MESSAGE" >&2
@@ -128,6 +135,19 @@ if [[ "$(field status)" != "ok" ]]; then
         printf 'adb_wifi_enabled setting: %s\n' "$SETTING_TEXT" >&2
     fi
     exit 1
+fi
+
+VERSION="$(field version)"
+VERSION_CODE="$(field version_code)"
+
+if [[ -z "$VERSION" || "$VERSION" == "unknown" ]]; then
+    echo "Error: the app did not report its installed version." >&2
+    exit 1
+fi
+
+if [[ "$OPERATION" == "version" ]]; then
+    printf 'App version: %s (code %s)\n' "$VERSION" "$VERSION_CODE"
+    exit 0
 fi
 
 if [[ "$OPERATION" != "status" ]]; then
@@ -144,4 +164,5 @@ printf 'Operation: %s\n' "$OPERATION"
 printf 'Result: success\n'
 printf 'adb_wifi_enabled setting (observed): %s\n' "$SETTING_TEXT"
 printf 'Required permission: %s\n' "$PERMISSION"
+printf 'App version: %s (code %s)\n' "$VERSION" "$VERSION_CODE"
 echo "Note: this is the requested system setting only; ADB reachability is not verified."

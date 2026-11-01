@@ -9,6 +9,7 @@ package local.termux.wirelessdebugging;
 import android.Manifest;
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -162,7 +163,8 @@ public final class MainActivity extends Activity {
                 + "Wireless Debugging\n"
                 + "Author: David González López-Tercero\n"
                 + "Copyright (C) 2026 David González López-Tercero\n"
-                + "License: GNU GPL v3 or later");
+                + "License: GNU GPL v3 or later\n"
+                + "Version: " + installedVersion());
         credits.setTextIsSelectable(true);
         layout.addView(credits);
 
@@ -171,6 +173,17 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         refreshStatus();
+    }
+
+    private String installedVersion() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(
+                    getPackageName(), 0);
+            return info.versionName + " (code " + info.getLongVersionCode()
+                    + ")";
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            return "unavailable";
+        }
     }
 
     private void addButton(

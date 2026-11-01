@@ -34,6 +34,14 @@ public final class ControlProtocolTest {
             return setting;
         }
 
+        public String versionName() {
+            return "2.5-test";
+        }
+
+        public long versionCode() {
+            return 7;
+        }
+
         public synchronized boolean writeSetting(boolean enabled) {
             calls++;
             setting = enabled ? 1 : 0;
@@ -91,6 +99,22 @@ public final class ControlProtocolTest {
         check(r.data.contains("invalid_operation"), "operation");
         r = run(fake, TOKEN, "status", "bad nonce");
         check(r.data.contains("invalid_nonce"), "nonce");
+
+        r = run(fake, TOKEN, "version", NONCE);
+        check(r.code == ControlProtocol.RESULT_OK
+                && r.data.contains("op=version version=2.5-test version_code=7")
+                && !r.data.contains("setting="), "version: " + r.data);
+        check(run(fake, TOKEN, "status", NONCE).data
+                .contains("version=2.5-test version_code=7"), "status version");
+        check(run(fake, TOKEN, "on", NONCE).data
+                .contains("version=2.5-test"), "on version");
+        Fake locked = new Fake(0, true);
+        r = run(locked, "b".repeat(64), "version", NONCE);
+        check(r.data.contains("unauthorized") && !r.data.contains("version")
+                && locked.calls == 0, "version needs token: " + r.data);
+        check(ControlProtocol.cleanVersion("1.0 beta;x").equals("1.0_beta_x"),
+                "sanitize");
+        check(ControlProtocol.cleanVersion(null).equals("unknown"), "null ver");
 
         // Concurrent requests keep their own correlation identifiers.
         final int threads = 32;

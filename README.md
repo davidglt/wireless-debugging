@@ -294,6 +294,7 @@ Usage:
 wireless-debugging on
 wireless-debugging off
 wireless-debugging status
+wireless-debugging --version
 ```
 
 Each command prints a readable result on standard output and exits 0, for example:
@@ -303,6 +304,7 @@ Operation: on
 Result: success
 adb_wifi_enabled setting (observed): ON
 Required permission: granted
+App version: 1.0 (code 1)
 Note: this is the requested system setting only; ADB reachability is not verified.
 ```
 
@@ -312,7 +314,9 @@ On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response,
 
 ### Control interface
 
-The wrapper sends an explicit ordered broadcast with `am broadcast` to `local.termux.wirelessdebugging/.ControlReceiver`, action `local.termux.wirelessdebugging.CONTROL`, and string extras `operation` (`on`, `off`, `status`), `nonce` (random 128-bit request ID) and `token`. `am start` is not used because it does not return activity output. The receiver is exported, so Termux can call it, but it validates the token (constant-time comparison) before reading or changing anything or disclosing state; unauthenticated callers only learn `error=unauthorized`. The result is returned as the broadcast result data, `wd1 nonce=<id> status=ok|error op=... setting=1|0|unknown permission=granted|denied [error=...]`, which `am` prints. No files or world-readable channels are used, and the token is never logged or returned. Each broadcast has its own result, so concurrent requests do not interfere, and the wrapper rejects responses whose nonce differs from its own. No root, ADB connection or extra permission is needed to obtain results. The token is passed as a process argument, visible only to the same Android user's processes at most, as before.
+The wrapper sends an explicit ordered broadcast with `am broadcast` to `local.termux.wirelessdebugging/.ControlReceiver`, action `local.termux.wirelessdebugging.CONTROL`, and string extras `operation` (`on`, `off`, `status`, `version`), `nonce` (random 128-bit request ID) and `token`. `am start` is not used because it does not return activity output. The receiver is exported, so Termux can call it, but it validates the token (constant-time comparison) before reading or changing anything or disclosing state; unauthenticated callers only learn `error=unauthorized`. The result is returned as the broadcast result data, `wd2 nonce=<id> status=ok|error op=... setting=1|0|unknown permission=granted|denied version=<versionName> version_code=<n> [error=...]`, which `am` prints. No files or world-readable channels are used, and the token is never logged or returned. Each broadcast has its own result, so concurrent requests do not interfere, and the wrapper rejects responses whose nonce differs from its own. No root, ADB connection or extra permission is needed to obtain results. The token is passed as a process argument, visible only to the same Android user's processes at most, as before.
+
+`wireless-debugging --version` prints `App version: <versionName> (code <versionCode>)` of the installed APK without changing any setting. The app reads both values from its own package metadata (`PackageManager`), shows them with the credits in the UI, and returns them only to requests with a valid token; the script contains no version of its own. If the app cannot be contacted, answers with a different protocol (`wd1` from an older APK), or reports no version, the command fails with an error on standard error instead of printing a version.
 
 ### Testing
 
@@ -322,7 +326,7 @@ Host checks (bash, JDK; no Android needed):
 bash tests/run-tests.sh
 ```
 
-This tests `ControlProtocol` (valid status/on/off, invalid token, missing permission, bad operation/nonce, concurrent requests) and the wrapper against a fake `am` (same cases plus timeout, malformed and mismatched responses, missing token file, parallel invocations). It does **not** compile `ControlReceiver`/`MainActivity` against Android, run the aapt2/d8 build, or exercise real Termux `am`; verify those on a device by running `./build.sh`, installing, then `wireless-debugging status|on|off`. Whether Termux's `am` prints `Broadcast completed: result=..., data="..."` on a given version has to be confirmed on a device.
+This tests `ControlProtocol` (valid status/on/off/version, invalid token, missing permission, bad operation/nonce, concurrent requests) and the wrapper against a fake `am` (same cases plus `--version`, an incompatible old-protocol app, timeout, malformed and mismatched responses, missing token file, parallel invocations). It does **not** compile `ControlReceiver`/`MainActivity` against Android, run the aapt2/d8 build, or exercise real Termux `am`; verify those on a device by running `./build.sh`, installing, then `wireless-debugging status|on|off`. Whether Termux's `am` prints `Broadcast completed: result=..., data="..."` on a given version has to be confirmed on a device.
 
 ## Example: reboot this phone over wireless ADB
 

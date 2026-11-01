@@ -57,6 +57,29 @@ public final class ControlReceiver extends BroadcastReceiver {
                     }
 
                     @Override
+                    public String versionName() {
+                        try {
+                            return app.getPackageManager().getPackageInfo(
+                                    app.getPackageName(), 0).versionName;
+                        } catch (PackageManager.NameNotFoundException
+                                | RuntimeException failure) {
+                            return null;
+                        }
+                    }
+
+                    @Override
+                    public long versionCode() {
+                        try {
+                            return app.getPackageManager().getPackageInfo(
+                                    app.getPackageName(), 0)
+                                    .getLongVersionCode();
+                        } catch (PackageManager.NameNotFoundException
+                                | RuntimeException failure) {
+                            return -1;
+                        }
+                    }
+
+                    @Override
                     public boolean writeSetting(boolean enabled) {
                         return Settings.Global.putInt(
                                 app.getContentResolver(),
