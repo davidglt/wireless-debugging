@@ -457,3 +457,13 @@ This replaces the previous log and redirects all standard error from the wrapper
 - Avoid `bash -x` and diagnostic sharing that exposes intent extras. Reading a token interactively avoids a literal shell-history entry but does not make intent extras a secret transport.
 - The app disables Android backup and applies FLAG_SECURE to its window.
 - Disable wireless debugging when not needed; an enabled setting is not a reachability check.
+
+## License
+
+Copyright (C) 2026 David González López-Tercero
+
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) for details.
+
+Third-party tools and SDK components retain their respective licenses.
