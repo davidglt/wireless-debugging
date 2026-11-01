@@ -113,7 +113,7 @@ The build expects the API 33 platform JAR at:
 $HOME/.local/share/android-sdk/platforms/android-33/android.jar
 ```
 
-Provision this file from an Android SDK API 33 platform installation, or edit `PLATFORM` in `build.sh` to point to your API 33 platform JAR. Do not replace it with an arbitrary JAR or a framework APK from the phone. A full platform-download procedure is not yet documented here.
+Provision this file from an Android SDK API 33 platform installation, or edit `PLATFORM` in `build.sh` to point to your API 33 platform JAR. Do not replace it with an arbitrary JAR or a framework APK from the phone. Follow the [Android API 33 platform setup guide](docs/android-platform-33.md) for download, checksum verification, installation and validation instructions.
 
 Check the file and its archive structure:
 
