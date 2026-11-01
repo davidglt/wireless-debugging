@@ -10,8 +10,8 @@ package local.termux.wirelessdebugging;
  * Test double for "am broadcast": runs the real ControlProtocol against a
  * file-backed setting and prints output in the format of am. Test only.
  * Environment: FAKE_AM_TOKEN, FAKE_AM_STATE (file), FAKE_AM_PERMISSION=1|0,
- * FAKE_AM_DELAY (seconds), FAKE_AM_MODE=garbage|wrongnonce|oldproto,
- * FAKE_AM_VERSION.
+ * FAKE_AM_DELAY (seconds), FAKE_AM_MODE selects malformed responses, and
+ * FAKE_AM_VERSION/FAKE_AM_BACKEND_FAILURE/FAKE_AM_WRITE_MODE configure tests.
  */
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -48,10 +48,16 @@ public final class FakeAm {
         final boolean permission = !"0".equals(System.getenv("FAKE_AM_PERMISSION"));
         ControlProtocol.Backend backend = new ControlProtocol.Backend() {
             public boolean hasPermission() {
+                if ("permission".equals(System.getenv("FAKE_AM_BACKEND_FAILURE"))) {
+                    throw new IllegalStateException("fake permission failure");
+                }
                 return permission;
             }
 
             public int readSetting() {
+                if ("read".equals(System.getenv("FAKE_AM_BACKEND_FAILURE"))) {
+                    throw new IllegalStateException("fake read failure");
+                }
                 try {
                     return Integer.parseInt(
                             new String(Files.readAllBytes(state)).trim());
@@ -61,15 +67,32 @@ public final class FakeAm {
             }
 
             public String versionName() {
+                if ("version-name".equals(
+                        System.getenv("FAKE_AM_BACKEND_FAILURE"))) {
+                    throw new IllegalStateException("fake version failure");
+                }
                 String v = System.getenv("FAKE_AM_VERSION");
                 return v != null ? v : "1.2.3";
             }
 
             public long versionCode() {
+                if ("version-code".equals(
+                        System.getenv("FAKE_AM_BACKEND_FAILURE"))) {
+                    throw new IllegalStateException("fake version code failure");
+                }
                 return 12;
             }
 
             public boolean writeSetting(boolean enabled) {
+                if ("write".equals(System.getenv("FAKE_AM_BACKEND_FAILURE"))) {
+                    throw new IllegalStateException("fake write failure");
+                }
+                if ("fail".equals(System.getenv("FAKE_AM_WRITE_MODE"))) {
+                    return false;
+                }
+                if ("mismatch".equals(System.getenv("FAKE_AM_WRITE_MODE"))) {
+                    return true;
+                }
                 try {
                     java.nio.file.Path tmp = Files.createTempFile(
                             state.toAbsolutePath().getParent(), "st", ".tmp");
@@ -86,8 +109,26 @@ public final class FakeAm {
         String used = "wrongnonce".equals(mode) ? "f".repeat(32) : nonce;
         ControlProtocol.Response r = ControlProtocol.handle(
                 System.getenv("FAKE_AM_TOKEN"), token, op, used, backend);
+        String data = r.data;
+        if ("missing-setting".equals(mode)) {
+            data = data.replaceAll(" setting=[^ ]+", "");
+        } else if ("duplicate-field".equals(mode)) {
+            data += " setting=1";
+        } else if ("missing-version".equals(mode)) {
+            data = data.replaceAll(" version=[^ ]+", "");
+        } else if ("missing-version-code".equals(mode)) {
+            data = data.replaceAll(" version_code=[^ ]+", "");
+        } else if ("bad-version-code".equals(mode)) {
+            data = data.replace("version_code=12", "version_code=12x");
+        } else if ("wrong-operation".equals(mode)) {
+            data = data.replace("op=" + op, "op=off");
+        } else if ("bad-setting".equals(mode)) {
+            data = data.replaceAll(" setting=(0|1|unknown)", " setting=maybe");
+        } else if ("unknown-field".equals(mode)) {
+            data += " extra=value";
+        }
         System.out.println("Broadcasting: Intent { act=... }");
         System.out.println("Broadcast completed: result=" + r.code
-                + ", data=\"" + r.data + "\"");
+                + ", data=\"" + data + "\"");
     }
 }

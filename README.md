@@ -38,6 +38,7 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 - `tests/run-tests.sh`: host-side checks (see Testing).
 - `build.sh`: packaging, compilation, alignment, signing and verification.
 - `scripts/wireless-debugging`: Termux command wrapper.
+- `scripts/adb-local-check`: shared bounded local ADB discovery and verification helper.
 - `examples/reboot.sh`: local wireless ADB reboot integration example.
 - `build/` and `dist/`: generated files, excluded from source control.
 
@@ -46,7 +47,7 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 Required commands on PATH:
 
 ```text
-java javac jar keytool aapt2 d8 zip zipalign apksigner
+java javac jar keytool aapt2 d8 zip zipalign apksigner od tr
 ```
 
 ### Install build tools in Termux
@@ -55,7 +56,7 @@ Run these commands inside Termux, not in an ADB shell or a desktop Linux termina
 
 ```sh
 pkg update &&
-pkg install git openjdk-21 aapt aapt2 d8 apksigner zip
+pkg install git openjdk-21 aapt aapt2 d8 apksigner zip coreutils
 ```
 
 Review the package manager's proposed changes before accepting. Use the repositories configured for your Termux distribution; do not mix repositories from different Termux distributions. Package availability may differ between distributions or change over time. If a package is unavailable, stop and inspect the configured repositories rather than substituting an arbitrary downloaded executable.
@@ -69,6 +70,7 @@ Review the package manager's proposed changes before accepting. Use the reposito
 | `d8` | `d8` | Convert compiled Java classes to DEX |
 | `apksigner` | `apksigner` | Sign and verify the APK |
 | `zip` | `zip` | Add DEX files to the APK |
+| `coreutils` | `od`, `tr` | Generate a signing password from `/dev/urandom` |
 
 The Android tool package ownership above was checked in the development device's installed package database: `zipalign` belongs to `aapt`, not to a separate package named `zipalign`. OpenJDK 21 is the installation option documented here; the original device's Java package/version was not established by that check. A missing package owner for a command path does not by itself prove a manual installation, because the path may be a symlink.
 
@@ -85,7 +87,7 @@ Run in Bash. The subshell reports every missing command and returns a nonzero st
 ```bash
 (
     missing=0
-    for tool in java javac jar keytool aapt2 d8 zip zipalign apksigner; do
+    for tool in java javac jar keytool aapt2 d8 zip zipalign apksigner od tr; do
         if path="$(command -v "$tool")"; then
             printf 'Found: %s -> %s\n' "$tool" "$path"
         else
@@ -147,11 +149,12 @@ Allow installation from the source Android identifies if prompted, then confirm 
 The build verifies alignment and signatures. It creates a local signing key and password outside the repository:
 
 ```text
-$HOME/.local/share/wireless-debugging/signing/local-signing.p12
-$HOME/.local/share/wireless-debugging/signing/store-password
+$HOME/.local/share/wireless-debugging/signing/identity/local-signing.p12
+$HOME/.local/share/wireless-debugging/signing/identity/store-password
 ```
 
-Keep both files private, back them up securely and reuse the same key for updates. Do not commit them.
+Keep both files private, back them up securely and reuse the same key for updates. Do not commit them. Existing root-level signing pairs from earlier builds are reused in place and are not moved or replaced; a verified pair may be restricted to owner-only permissions.
+New signing passwords are generated from the operating system's cryptographic random source. The build stages and validates a new identity before publishing it. If an existing key/password pair is incomplete or cannot be verified, the build fails without replacing either file. The build never reads or changes ADB keys or the app control token.
 
 ## Initial wireless ADB pairing from Termux
 
@@ -272,6 +275,7 @@ From the repository root, install the command in `$HOME/bin`:
 ```sh
 mkdir -p "$HOME/bin"
 install -m 700 scripts/wireless-debugging "$HOME/bin/wireless-debugging"
+install -m 700 scripts/adb-local-check "$HOME/bin/adb-local-check"
 ```
 
 If `$HOME/bin` is not on your `PATH`, add it (for example to `~/.bashrc`) and reload the shell:
@@ -306,13 +310,18 @@ Create the private token file using Bash. Copy the current 64-character token di
         echo 'Error: invalid control token format.' >&2
         exit 1
     fi
-    printf '%s\n' "$CONTROL_TOKEN" > "$HOME/.config/wireless-debugging/token"
-    chmod 600 "$HOME/.config/wireless-debugging/token"
+    TOKEN_FILE="$HOME/.config/wireless-debugging/token"
+    if [[ -e "$TOKEN_FILE" || -L "$TOKEN_FILE" ]]; then
+        echo 'Error: token file already exists; it was left unchanged.' >&2
+        exit 1
+    fi
+    (set -o noclobber; printf '%s\n' "$CONTROL_TOKEN" > "$TOKEN_FILE")
+    chmod 600 "$TOKEN_FILE"
     unset CONTROL_TOKEN
 )
 ```
 
-This replaces any existing token file. Never commit it. Reconfigure it if the app's token changes. The app control token is separate from ADB keys and pairing codes.
+The command refuses to overwrite an existing token. Never commit it. If the app's token changes, intentionally update the file after confirming the new token. The app control token is separate from ADB keys and pairing codes.
 
 Usage:
 
@@ -327,10 +336,10 @@ Behavior:
 
 - `on` requests activation and `status` queries the app's setting, permission and installed version. Both perform a bounded ADB check after a successful app response. `off` changes the setting and never checks or connects. `--version` only asks the app for its version; it never uses `adb`, Python or discovery.
 - The app operation result, observed `adb_wifi_enabled` setting and ADB connectivity verification are reported separately. `ADB check: available` is printed only when a specific discovered local target reports `device`; otherwise the output says `ADB check: not verified` with the observed reason. An unverified ADB check does not turn a successful `on`/`status` app operation into a failure.
-- The ADB check browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates each advertised connection port (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. For each port it runs `adb connect 127.0.0.1:PORT` and `adb -s 127.0.0.1:PORT get-state`, and requires `device`. Other USB/remote transports already known to adb do not count.
+- The installed `adb-local-check` helper is shared by the wrapper and reboot example. Its one global deadline covers dependency imports, `adb start-server`, discovery, local connects and each `get-state`. Discovery browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates connection ports (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. Availability requires `adb -s 127.0.0.1:PORT get-state` to return `device`. Other USB/remote transports already known to adb do not count.
 - It does not pair, reboot, run `adb kill-server`, disconnect other devices, touch ADB keys, change security settings, download or install anything. The adb client server may be started if needed.
 - Results: `available`; `not verified` with the observed reason (missing dependencies, discovery failure, timeout, `unauthorized`, `offline`, or no usable local port). No discovered service is not proof that pairing was lost.
-- `WIRELESS_DEBUGGING_CHECK_TIMEOUT` (integer 1-300 seconds, default 30) bounds the whole ADB check including discovery and all connection attempts. `WIRELESS_DEBUGGING_TIMEOUT` still bounds the app request.
+- `WIRELESS_DEBUGGING_TIMEOUT` (default 15) and `WIRELESS_DEBUGGING_CHECK_TIMEOUT` (default 30) each accept only 1-300 decimal seconds, with at most three digits; leading zeroes are accepted and normalized as decimal. Zero, empty, non-decimal, overlong and out-of-range values are rejected. The ADB check timeout is one global deadline including dependency imports, server startup, discovery, connect and `get-state`; the app timeout bounds only the app request.
 
 Example output of `wireless-debugging on`:
 
@@ -339,7 +348,7 @@ Operation: on
 Result: success
 adb_wifi_enabled setting (observed): ON
 Required permission: granted
-App version: 1.0 (code 1)
+App version: 1.1 (code 2)
 ADB check: available
 ADB target: 127.0.0.1:41234
 ```
@@ -348,7 +357,7 @@ Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operati
 
 On app failure (rejected token, missing WRITE_SECURE_SETTINGS, app-request timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
-**Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall the script with the `install -m 700` command above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
+**Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall both scripts with the `install -m 700` commands above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
 ### Control interface
 
@@ -358,13 +367,13 @@ The wrapper sends an explicit ordered broadcast with `am broadcast` to `local.te
 
 ### Testing
 
-Host checks (bash, JDK; python3 optional; no Android needed). They use fake `am`, `adb` and discovery interpreters, so they do not verify real Termux, a device or Android compilation:
+Host checks (bash, JDK; python3 optional; no Android needed). They use fake `am`, `adb`, build tools and discovery interpreters, so they do not verify real Termux, a device or Android compilation:
 
 ```sh
 bash tests/run-tests.sh
 ```
 
-It also does simple source-level checks of the UI structure (buttons, token not on the main screen, `FLAG_SECURE`, non-exported screens). This tests `ControlProtocol` (valid status/on/off/version, invalid token, missing permission, bad operation/nonce, concurrent requests) and the wrapper against a fake `am` (same cases plus `--version`, an incompatible old-protocol app, timeout, malformed and mismatched responses, missing token file, parallel invocations). It does **not** compile `ControlReceiver`/`MainActivity` against Android, run the aapt2/d8 build, or exercise real Termux `am`; verify those on a device by running `./build.sh`, installing, then `wireless-debugging status|on|off`. Whether Termux's `am` prints `Broadcast completed: result=..., data="..."` on a given version has to be confirmed on a device.
+Source-text UI checks are structural assertions only, not functional Android tests. The Java protocol tests and wrapper integration checks use fake tools; concurrent-request checks cover nonce correlation in host test doubles only, not Android broadcast scheduling or real concurrent device operations. Fake build-tool checks exercise stale-artifact cleanup, signing-state safety and atomic publication, not Android compilation or a valid installable APK. The suite does **not** compile Android activities/receiver, exercise real Termux `am`, install or run the APK on a device, test inactivity/authorization behavior, or execute the reboot example. Those require a real Android/Termux device and the build tools.
 
 ## Example: reboot this phone over wireless ADB
 
@@ -382,7 +391,7 @@ install -m 700 examples/reboot.sh "$HOME/bin/reboot"
 
 `$HOME/bin/reboot` is this project's command (the source file stays `examples/reboot.sh`). With `$HOME/bin` early on `PATH` it may shadow another `reboot`; run `type -a reboot` to check, and use the explicit path `$HOME/bin/reboot` where disambiguation matters.
 
-The example uses `adb`, `timeout`, the installed `wireless-debugging` wrapper, and Python with `zeroconf` at `$HOME/.venvs/adb-discovery/bin/python`. Configure the app permission, Termux special access and private token first. An authorized initial ADB connection is still required for the permission grant.
+The example uses `adb`, `timeout`, the installed `wireless-debugging` wrapper and the adjacent `$HOME/bin/adb-local-check` helper, plus Python with `zeroconf` at `$HOME/.venvs/adb-discovery/bin/python`. Install the helper as shown in [Install the Termux command](#install-the-termux-command). Configure the app permission, Termux special access and private token first. An authorized initial ADB connection is still required for the permission grant.
 
 Save your work before running:
 
@@ -394,14 +403,18 @@ This command actually reboots the phone once connected. It does not ask for a fi
 
 The example:
 
-1. Starts the ADB server and requests `wireless-debugging on`.
-2. Continues with discovery even if the launcher reports an error, because an observed launcher exception did not prevent the operation.
-3. Browses IPv4 `_adb-tls-connect._tcp.local.` services for eight seconds and tries their advertised ports on `127.0.0.1`, not on remote advertised addresses.
+1. Requests `wireless-debugging on`; the shared helper starts the ADB server and verifies discovery as part of the bounded check.
+2. Reuses the wrapper's structured verified-target result when available, avoiding duplicate discovery. If the wrapper could not return a result, the example runs the helper directly.
+3. Browses IPv4 `_adb-tls-connect._tcp.local.` services and tries their validated ports only on `127.0.0.1`, not on remote advertised addresses.
 4. Requires `adb -s TARGET get-state` to return `device`.
-5. Offers interactive pairing if no connection is found. Open the phone's pairing-code dialog, provide its pairing port and enter the code directly at the ADB prompt.
-6. Repeats discovery after pairing, then runs `adb -s TARGET reboot`.
+5. Offers explicit interactive pairing if no connection is found. Open the phone's pairing-code dialog, provide its pairing port and enter the code directly at the ADB prompt.
+6. Repeats bounded discovery after pairing, then runs `adb -s TARGET reboot`.
 
-Discovery can fail if the network does not expose mDNS or the device does not accept local connections. Pairing and connection ports are distinct; the script rediscovers the connection port. It does not disable wireless debugging before reboot, because that would interrupt the required connection, and does not guarantee its state after reboot. If discovery is cancelled or connection fails, no reboot command is issued. The polling and pairing flow is retained from the supplied example; the newly added activation integration still needs device testing.
+Discovery can fail if the network does not expose mDNS or the device does not accept local connections. Pairing and connection ports are distinct; the script rediscovers the connection port. It does not disable wireless debugging before reboot, because that would interrupt the required connection, and does not guarantee its state after reboot. If discovery is cancelled or connection fails, no reboot command is issued. The example's pairing/reboot behavior and on-device integration have not been executed or verified as part of host checks.
+
+## APK versions and releases
+
+The manifest is the single authoritative source for `versionCode` and `versionName`. Increase `versionCode` monotonically for every published APK and update `versionName` to the corresponding release label. See [CHANGELOG.md](CHANGELOG.md) for this release's changes.
 
 ## Troubleshooting
 

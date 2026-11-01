@@ -6,9 +6,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADB_CHECK="$SCRIPT_DIR/adb-local-check"
 OPERATION="${1:-}"
 TOKEN_FILE="$HOME/.config/wireless-debugging/token"
-DISCOVERY_PYTHON="$HOME/.venvs/adb-discovery/bin/python"
 
 if (( $# != 1 )); then
     echo "Usage: wireless-debugging {on|off|status|--version}" >&2
@@ -28,9 +29,7 @@ if [[ ! -r "$TOKEN_FILE" ]]; then
     echo "Error: control token file is missing or unreadable." >&2
     exit 1
 fi
-
 IFS= read -r TOKEN < "$TOKEN_FILE"
-
 if [[ ! "$TOKEN" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Error: invalid control token format." >&2
     exit 1
@@ -40,207 +39,38 @@ if ! command -v am >/dev/null 2>&1; then
     echo "Error: Android activity launcher 'am' was not found." >&2
     exit 1
 fi
-
-TIMEOUT_SECONDS="${WIRELESS_DEBUGGING_TIMEOUT:-15}"
-
-if [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( TIMEOUT_SECONDS < 1 )); then
-    echo "Error: WIRELESS_DEBUGGING_TIMEOUT must be a positive integer." >&2
-    exit 1
-fi
-
 if ! command -v timeout >/dev/null 2>&1; then
     echo "Error: 'timeout' was not found (pkg install coreutils)." >&2
     exit 1
 fi
 
-CHECK_TIMEOUT="${WIRELESS_DEBUGGING_CHECK_TIMEOUT:-30}"
-
-if [[ "$OPERATION" != "off" && "$OPERATION" != "version" ]]; then
-    if [[ ! "$CHECK_TIMEOUT" =~ ^[0-9]{1,3}$ ]] \
-        || (( 10#$CHECK_TIMEOUT < 1 || 10#$CHECK_TIMEOUT > 300 )); then
-        echo "Error: WIRELESS_DEBUGGING_CHECK_TIMEOUT must be an integer from 1 to 300." >&2
+parse_timeout() {
+    local NAME="$1" VALUE="$2"
+    if [[ ! "$VALUE" =~ ^[0-9]{1,3}$ ]]; then
+        printf 'Error: %s must be a decimal integer from 1 to 300.\n' "$NAME" >&2
         exit 1
     fi
-    CHECK_TIMEOUT=$((10#$CHECK_TIMEOUT))
+    VALUE=$((10#$VALUE))
+    if (( VALUE < 1 || VALUE > 300 )); then
+        printf 'Error: %s must be a decimal integer from 1 to 300.\n' "$NAME" >&2
+        exit 1
+    fi
+    printf '%s' "$VALUE"
+}
+
+TIMEOUT_SECONDS="$(parse_timeout WIRELESS_DEBUGGING_TIMEOUT \
+    "${WIRELESS_DEBUGGING_TIMEOUT-15}")"
+if [[ "$OPERATION" != off && "$OPERATION" != version ]]; then
+    CHECK_TIMEOUT="$(parse_timeout WIRELESS_DEBUGGING_CHECK_TIMEOUT \
+        "${WIRELESS_DEBUGGING_CHECK_TIMEOUT-30}")"
 fi
 
 NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-
 if [[ ! "$NONCE" =~ ^[0-9a-f]{32}$ ]]; then
     echo "Error: could not create a request identifier." >&2
     exit 1
 fi
 
-# Discovery of local ADB connection ports. Only _adb-tls-connect._tcp.local.
-# services are browsed; only the advertised port is used (never the address),
-# and the pairing service is never queried.
-# Arguments: browse seconds, overall deadline seconds (sys.argv[1], [2]).
-DISCOVERY_CODE="$(cat <<'PY'
-import sys
-import threading
-import time
-
-from zeroconf import IPVersion, ServiceBrowser, ServiceListener, Zeroconf
-
-SERVICE_TYPE = "_adb-tls-connect._tcp.local."
-MAX_PORTS = 8
-
-browse = float(sys.argv[1])
-deadline = time.monotonic() + float(sys.argv[2])
-
-
-class Listener(ServiceListener):
-    def __init__(self):
-        self.names = set()
-        self.lock = threading.Lock()
-
-    def add_service(self, resolver, service_type, name):
-        with self.lock:
-            self.names.add(name)
-
-    def update_service(self, resolver, service_type, name):
-        self.add_service(resolver, service_type, name)
-
-    def remove_service(self, resolver, service_type, name):
-        with self.lock:
-            self.names.discard(name)
-
-
-listener = Listener()
-
-with Zeroconf(ip_version=IPVersion.V4Only) as resolver:
-    browser = ServiceBrowser(resolver, SERVICE_TYPE, listener)
-    try:
-        time.sleep(browse)
-
-        with listener.lock:
-            names = sorted(listener.names)
-
-        ports = set()
-        for name in names:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            info = resolver.get_service_info(
-                SERVICE_TYPE, name, timeout=int(min(2.0, left) * 1000)
-            )
-            if info is not None and 1024 <= info.port <= 65535:
-                ports.add(info.port)
-
-        for port in sorted(ports)[:MAX_PORTS]:
-            print(port)
-    finally:
-        browser.cancel()
-PY
-)"
-
-# Verifies a usable local ADB transport. Sets CHECK_TARGET on success and
-# CHECK_REASON otherwise. Never pairs, disconnects, kills the server or
-# connects to anything but 127.0.0.1. Bounded by CHECK_TIMEOUT seconds.
-adb_check() {
-    local DEADLINE=$(( SECONDS + CHECK_TIMEOUT ))
-    local MISSING="" PORTS PORT TARGET STATE STATUS LEFT BROWSE
-    local TRIED=0 TIMED_OUT=0 UNAUTHORIZED="" OFFLINE="" SEEN=" "
-    CHECK_TARGET=""
-    CHECK_REASON=""
-
-    command -v adb >/dev/null 2>&1 || MISSING="adb (pkg install android-tools)"
-    if [[ ! -x "$DISCOVERY_PYTHON" ]]; then
-        MISSING="${MISSING:+$MISSING, }python discovery environment ($DISCOVERY_PYTHON)"
-    elif ! timeout 10 "$DISCOVERY_PYTHON" -c 'import zeroconf' >/dev/null 2>&1; then
-        MISSING="${MISSING:+$MISSING, }zeroconf in the discovery environment"
-    fi
-    if [[ -n "$MISSING" ]]; then
-        CHECK_REASON="missing dependencies: $MISSING"
-        return 1
-    fi
-
-    left() {
-        LEFT=$(( DEADLINE - SECONDS ))
-        (( LEFT > 0 )) || LEFT=0
-    }
-
-    left
-    if (( LEFT < 1 )); then
-        CHECK_REASON="timed out"
-        return 1
-    fi
-    STATUS=0
-    timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb start-server >/dev/null 2>&1 || STATUS=$?
-    if (( STATUS != 0 )); then
-        CHECK_REASON="the adb client server could not be started in time"
-        return 1
-    fi
-
-    left
-    if (( LEFT < 1 )); then
-        CHECK_REASON="timed out before discovery"
-        return 1
-    fi
-    BROWSE=$(( LEFT / 2 ))
-    (( BROWSE >= 1 )) || BROWSE=1
-    (( BROWSE <= 8 )) || BROWSE=8
-    STATUS=0
-    PORTS="$(timeout "$LEFT" "$DISCOVERY_PYTHON" -c "$DISCOVERY_CODE" \
-        "$BROWSE" "$(( LEFT > 1 ? LEFT - 1 : 1 ))" 2>/dev/null)" || STATUS=$?
-    if (( STATUS == 124 )); then
-        CHECK_REASON="service discovery timed out"
-        return 1
-    elif (( STATUS != 0 )); then
-        CHECK_REASON="service discovery failed"
-        return 1
-    fi
-
-    while IFS= read -r PORT; do
-        [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || continue
-        PORT=$((10#$PORT))
-        (( PORT >= 1024 && PORT <= 65535 )) || continue
-        [[ "$SEEN" == *" $PORT "* ]] && continue
-        SEEN="$SEEN$PORT "
-        (( TRIED < 8 )) || break
-        TRIED=$(( TRIED + 1 ))
-        TARGET="127.0.0.1:$PORT"
-
-        left
-        if (( LEFT < 1 )); then
-            TIMED_OUT=1
-            break
-        fi
-        STATUS=0
-        timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb connect "$TARGET" >/dev/null 2>&1 || STATUS=$?
-        if (( STATUS == 124 )); then
-            TIMED_OUT=1
-            continue
-        fi
-
-        left
-        if (( LEFT < 1 )); then
-            TIMED_OUT=1
-            break
-        fi
-        STATE="$(timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb -s "$TARGET" get-state 2>/dev/null)" || true
-        case "$STATE" in
-            device) CHECK_TARGET="$TARGET"; return 0 ;;
-            unauthorized) UNAUTHORIZED="$TARGET" ;;
-            offline) OFFLINE="$TARGET" ;;
-        esac
-    done <<< "$PORTS"
-
-    if [[ -n "$UNAUTHORIZED" ]]; then
-        CHECK_REASON="unauthorized on $UNAUTHORIZED; this client is not authorized, no pairing was attempted"
-    elif [[ -n "$OFFLINE" ]]; then
-        CHECK_REASON="offline on $OFFLINE"
-    elif (( TIMED_OUT )); then
-        CHECK_REASON="timed out before a local transport was verified"
-    elif (( TRIED == 0 )); then
-        CHECK_REASON="no local connect service found; this does not prove pairing was lost"
-    else
-        CHECK_REASON="no discovered local port gave a usable ADB device ($TRIED tried)"
-    fi
-    return 1
-}
-# An ordered broadcast returns its result code and data on stdout, unlike
-# "am start". The response is correlated with this request using NONCE.
 STATUS=0
 OUTPUT="$(timeout "$TIMEOUT_SECONDS" am broadcast --user 0 \
     -n local.termux.wirelessdebugging/.ControlReceiver \
@@ -248,54 +78,149 @@ OUTPUT="$(timeout "$TIMEOUT_SECONDS" am broadcast --user 0 \
     --es operation "$OPERATION" \
     --es nonce "$NONCE" \
     --es token "$TOKEN" 2>&1)" || STATUS=$?
-
 unset TOKEN
 
-if (( STATUS == 124 )); then
+if (( STATUS == 124 || STATUS == 137 )); then
     printf 'Error: no response within %s seconds.\n' "$TIMEOUT_SECONDS" >&2
     exit 1
 fi
-
-# Termux am may exit with the receiver's result code (1 on success).
-# Neither 0 nor 1 proves success; validate the response below.
 if (( STATUS != 0 && STATUS != 1 )); then
     echo "Error: Android activity manager command failed." >&2
     exit 1
 fi
 
-RESPONSE_RE='wd2 nonce=([0-9a-f]{32}|none)( [a-z_]+=[A-Za-z0-9_.+-]+)*'
-OTHER_RE='wd[0-9]+ nonce='
-
-if [[ ! "$OUTPUT" =~ $RESPONSE_RE && "$OUTPUT" =~ $OTHER_RE ]]; then
-    echo "Error: the installed app uses an incompatible protocol; reinstall the matching APK." >&2
+OUTPUT_WITHOUT_MARKERS="${OUTPUT//wd2 nonce=/}"
+RESPONSE_COUNT=$((${#OUTPUT} - ${#OUTPUT_WITHOUT_MARKERS}))
+RESPONSE_COUNT=$((RESPONSE_COUNT / 10))
+if (( RESPONSE_COUNT != 1 )); then
+    if [[ "$OUTPUT" =~ wd[0-9]+[[:space:]]nonce= ]]; then
+        echo "Error: the installed app uses an incompatible protocol; reinstall the matching APK." >&2
+    else
+        echo "Error: no valid response from the app (is it installed, opened once, and up to date?)." >&2
+    fi
     exit 1
 fi
 
+RESPONSE_RE='wd2 nonce=[0-9a-f]{32}( [a-z_]+=[A-Za-z0-9_.+-]+)*'
 if [[ ! "$OUTPUT" =~ $RESPONSE_RE ]]; then
-    echo "Error: no valid response from the app (is it installed, opened once, and up to date?)." >&2
+    echo "Error: malformed response from the app." >&2
     exit 1
 fi
-
 RESPONSE="${BASH_REMATCH[0]}"
-
+AFTER_RESPONSE="${OUTPUT#*"$RESPONSE"}"
+if [[ "$AFTER_RESPONSE" != '"' ]]; then
+    echo "Error: malformed response from the app." >&2
+    exit 1
+fi
 if [[ " $RESPONSE " != *" nonce=$NONCE "* ]]; then
     echo "Error: response did not match this request." >&2
     exit 1
 fi
 
-field() {
-    local WANTED="$1" PAIR
-    for PAIR in $RESPONSE; do
-        if [[ "$PAIR" == "$WANTED="* ]]; then
-            printf '%s' "${PAIR#*=}"
-            return 0
-        fi
-    done
-    return 0
+declare -A FIELDS=()
+read -r -a PARTS <<< "$RESPONSE"
+for PAIR in "${PARTS[@]:1}"; do
+    KEY="${PAIR%%=*}"
+    VALUE="${PAIR#*=}"
+    if [[ ! "$KEY" =~ ^[a-z_]+$ || ! "$VALUE" =~ ^[A-Za-z0-9_.+-]+$ ]] \
+            || [[ -v FIELDS[$KEY] ]]; then
+        echo "Error: malformed or duplicate response field." >&2
+        exit 1
+    fi
+    case "$KEY" in
+        nonce|status|op|setting|permission|version|version_code|error) ;;
+        *)
+            echo "Error: unexpected response field." >&2
+            exit 1
+            ;;
+    esac
+    FIELDS["$KEY"]="$VALUE"
+done
+
+required_field() {
+    [[ -v FIELDS[$1] ]]
 }
 
-REQUEST_STATE="$(field setting)"
-PERMISSION="$(field permission)"
+if ! required_field nonce || ! required_field status \
+        || [[ "${FIELDS[nonce]}" != "$NONCE" ]]; then
+    echo "Error: response did not match the requested operation." >&2
+    exit 1
+fi
+
+APP_STATUS="${FIELDS[status]}"
+REQUEST_STATE="${FIELDS[setting]:-}"
+PERMISSION="${FIELDS[permission]:-}"
+VERSION="${FIELDS[version]:-}"
+VERSION_CODE="${FIELDS[version_code]:-}"
+ERROR="${FIELDS[error]:-}"
+
+if [[ "$APP_STATUS" == ok ]]; then
+    if ! required_field op || [[ "${FIELDS[op]}" != "$OPERATION" ]]; then
+        echo "Error: response did not match the requested operation." >&2
+        exit 1
+    fi
+    if required_field error || ! required_field version || ! required_field version_code; then
+        echo "Error: malformed successful response from the app." >&2
+        exit 1
+    fi
+    if [[ "$VERSION" == unknown ]]; then
+        echo "Error: the app did not report its installed version." >&2
+        exit 1
+    fi
+    if [[ ! "$VERSION_CODE" =~ ^[0-9]{1,20}$ ]]; then
+        echo "Error: malformed version code from the app." >&2
+        exit 1
+    fi
+    if [[ "$OPERATION" == version ]]; then
+        if required_field setting || required_field permission; then
+            echo "Error: inconsistent version response from the app." >&2
+            exit 1
+        fi
+    else
+        if ! required_field setting || ! required_field permission \
+                || [[ ! "$REQUEST_STATE" =~ ^(0|1|unknown)$ ]] \
+                || [[ ! "$PERMISSION" =~ ^(granted|denied)$ ]]; then
+            echo "Error: malformed setting status from the app." >&2
+            exit 1
+        fi
+        if [[ "$OPERATION" != status && "$PERMISSION" != granted ]]; then
+            echo "Error: inconsistent permission status from the app." >&2
+            exit 1
+        fi
+    fi
+elif [[ "$APP_STATUS" == error ]]; then
+    if ! required_field error || required_field version || required_field version_code \
+            || [[ ! "$ERROR" =~ ^(unauthorized|invalid_nonce|permission_denied|write_failed|invalid_operation|internal_error)$ ]]; then
+        echo "Error: malformed error response from the app." >&2
+        exit 1
+    fi
+    if required_field op && [[ "${FIELDS[op]}" != "$OPERATION" ]]; then
+        echo "Error: error response did not match the requested operation." >&2
+        exit 1
+    fi
+    case "$ERROR" in
+        permission_denied|write_failed)
+            if ! required_field op || [[ "$OPERATION" == status || "$OPERATION" == version ]] \
+                    || ! required_field setting || ! required_field permission \
+                    || [[ ! "$REQUEST_STATE" =~ ^(0|1|unknown)$ ]] \
+                    || [[ ! "$PERMISSION" =~ ^(granted|denied)$ ]] \
+                    || { [[ "$ERROR" == permission_denied ]] && [[ "$PERMISSION" != denied ]]; } \
+                    || { [[ "$ERROR" == write_failed ]] && [[ "$PERMISSION" != granted ]]; }; then
+                echo "Error: inconsistent error response from the app." >&2
+                exit 1
+            fi
+            ;;
+        *)
+            if required_field setting || required_field permission; then
+                echo "Error: inconsistent error response from the app." >&2
+                exit 1
+            fi
+            ;;
+    esac
+else
+    echo "Error: invalid response status from the app." >&2
+    exit 1
+fi
 
 case "$REQUEST_STATE" in
     1) SETTING_TEXT="ON" ;;
@@ -303,38 +228,30 @@ case "$REQUEST_STATE" in
     *) SETTING_TEXT="UNKNOWN" ;;
 esac
 
-if [[ "$(field status)" != "ok" ]]; then
-    ERROR="$(field error)"
+if [[ "$APP_STATUS" == error ]]; then
     case "$ERROR" in
         unauthorized) MESSAGE="control token was rejected by the app" ;;
         permission_denied) MESSAGE="WRITE_SECURE_SETTINGS has not been granted" ;;
         write_failed) MESSAGE="the system setting could not be updated" ;;
         invalid_operation) MESSAGE="operation rejected by the app (incompatible app version?)" ;;
-        *) MESSAGE="request failed (${ERROR:-unknown})" ;;
+        internal_error) MESSAGE="the app could not complete the request" ;;
+        *) MESSAGE="request failed ($ERROR)" ;;
     esac
     printf 'Error: %s.\n' "$MESSAGE" >&2
-    if [[ -n "$PERMISSION" ]]; then
+    if required_field setting; then
         printf 'adb_wifi_enabled setting: %s\n' "$SETTING_TEXT" >&2
     fi
     exit 1
 fi
 
-VERSION="$(field version)"
-VERSION_CODE="$(field version_code)"
-
-if [[ -z "$VERSION" || "$VERSION" == "unknown" ]]; then
-    echo "Error: the app did not report its installed version." >&2
-    exit 1
-fi
-
-if [[ "$OPERATION" == "version" ]]; then
+if [[ "$OPERATION" == version ]]; then
     printf 'App version: %s (code %s)\n' "$VERSION" "$VERSION_CODE"
     exit 0
 fi
 
-if [[ "$OPERATION" != "status" ]]; then
+if [[ "$OPERATION" != status ]]; then
     EXPECTED=1
-    [[ "$OPERATION" == "off" ]] && EXPECTED=0
+    [[ "$OPERATION" == off ]] && EXPECTED=0
     if [[ "$REQUEST_STATE" != "$EXPECTED" ]]; then
         printf 'Error: setting was not changed; observed adb_wifi_enabled: %s.\n' \
             "$SETTING_TEXT" >&2
@@ -345,20 +262,69 @@ fi
 printf 'Operation: %s\n' "$OPERATION"
 printf 'Result: success\n'
 printf 'adb_wifi_enabled setting (observed): %s\n' "$SETTING_TEXT"
-printf 'Required permission: %s\n' "$PERMISSION"
+printf 'Required permission: %s\n' "${PERMISSION^^}"
 printf 'App version: %s (code %s)\n' "$VERSION" "$VERSION_CODE"
 
-if [[ "$OPERATION" == "off" ]]; then
+if [[ "$OPERATION" == off ]]; then
     echo "Note: ADB connectivity was not checked and no connection was attempted."
     exit 0
 fi
 
-if adb_check; then
-    printf 'ADB check: available\n'
-    printf 'ADB target: %s\n' "$CHECK_TARGET"
+if [[ -x "$ADB_CHECK" ]]; then
+    if ! ADB_RESULT="$(bash "$ADB_CHECK" "$CHECK_TIMEOUT")"; then
+        ADB_RESULT='adb-check-v1|unavailable||probe_failed|shared ADB helper exited unexpectedly'
+    fi
+else
+    ADB_RESULT='adb-check-v1|unavailable||missing_dependency|adb-local-check helper'
+fi
+IFS='|' read -r RESULT_VERSION CHECK_STATE CHECK_TARGET CHECK_REASON CHECK_DETAIL \
+    <<< "$ADB_RESULT"
+
+if [[ "$RESULT_VERSION" != adb-check-v1 \
+        || ! "$CHECK_STATE" =~ ^(available|unavailable)$ \
+        || ! "$CHECK_REASON" =~ ^[a-z_]+$ ]]; then
+    CHECK_STATE=unavailable
+    CHECK_TARGET=""
+    CHECK_REASON=probe_failed
+    CHECK_DETAIL="ADB helper returned a malformed result"
+fi
+if [[ "$CHECK_STATE" == available ]] \
+        && [[ ! "$CHECK_TARGET" =~ ^127\.0\.0\.1:[0-9]{1,5}$ \
+            || "$CHECK_REASON" != verified ]]; then
+    CHECK_STATE=unavailable
+    CHECK_TARGET=""
+    CHECK_REASON=probe_failed
+    CHECK_DETAIL="ADB helper returned an invalid verified target"
+fi
+if [[ "$CHECK_STATE" == available ]]; then
+    CHECK_PORT="${CHECK_TARGET#127.0.0.1:}"
+    CHECK_PORT=$((10#$CHECK_PORT))
+    if (( CHECK_PORT < 1024 || CHECK_PORT > 65535 )); then
+        CHECK_STATE=unavailable
+        CHECK_TARGET=""
+        CHECK_REASON=probe_failed
+        CHECK_DETAIL="ADB helper returned an out-of-range target"
+    fi
+fi
+
+if [[ "${WIRELESS_DEBUGGING_MACHINE_OUTPUT:-}" == 1 ]]; then
+    printf 'adb-check-v1|%s|%s|%s|%s\n' \
+        "$CHECK_STATE" "$CHECK_TARGET" "$CHECK_REASON" "$CHECK_DETAIL" >&3 || true
+fi
+
+if [[ "$CHECK_STATE" == available ]]; then
+    printf 'ADB check: available\nADB target: %s\n' "$CHECK_TARGET"
     exit 0
 fi
 
-printf 'ADB check: not verified (%s)\n' "$CHECK_REASON"
+case "$CHECK_REASON" in
+    missing_dependency) CHECK_TEXT="missing dependencies: $CHECK_DETAIL" ;;
+    probe_failed) CHECK_TEXT="verification failed: $CHECK_DETAIL" ;;
+    timeout) CHECK_TEXT="timed out: $CHECK_DETAIL" ;;
+    unauthorized|offline|unknown_state|no_service|unverified)
+        CHECK_TEXT="$CHECK_DETAIL" ;;
+    *) CHECK_TEXT="verification unavailable: $CHECK_DETAIL" ;;
+esac
+printf 'ADB check: not verified (%s)\n' "$CHECK_TEXT"
 echo "Note: the setting above and the ADB check are independent observations."
 exit 0
