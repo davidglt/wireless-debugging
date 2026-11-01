@@ -1,4 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# Copyright (C) 2026 David González López-Tercero
+# Author: David González López-Tercero
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSE and NOTICE in the repository root for licensing details.
+
 set -euo pipefail
 
 PYTHON="$HOME/.venvs/adb-discovery/bin/python"

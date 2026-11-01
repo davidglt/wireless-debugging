@@ -1,3 +1,9 @@
+/*
+ * Copyright (C) 2026 David González López-Tercero
+ * Author: David González López-Tercero
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * See LICENSE and NOTICE in the repository root for licensing details.
+ */
 package local.termux.wirelessdebugging;
 
 import android.Manifest;
