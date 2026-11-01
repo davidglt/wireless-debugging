@@ -1,26 +1,29 @@
-# Build outputs
+# Build output
 /build/
-/dist/
+/out/
 *.apk
-*.aab
 *.dex
 *.class
-*.idsig
 
-# Local SDK configuration
-local.properties
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*~
+*.swp
+*.swo
 
-# Signing keys and credentials
+# Signing keys and certificates
 *.jks
 *.keystore
 *.p12
-*.pem
+*.pfx
+
+# Local configuration and secrets
 .env
 .env.*
-/secrets/
+local.properties
 
-# Editor files
-.idea/
-.vscode/
-*.swp
-*~
+# Operating system files
+.DS_Store
+Thumbs.db
