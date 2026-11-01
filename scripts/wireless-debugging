@@ -76,7 +76,9 @@ if (( STATUS == 124 )); then
     exit 1
 fi
 
-if (( STATUS != 0 )); then
+# Termux am may exit with the receiver's result code (1 on success).
+# Neither 0 nor 1 proves success; validate the response below.
+if (( STATUS != 0 && STATUS != 1 )); then
     echo "Error: Android activity manager command failed." >&2
     exit 1
 fi
