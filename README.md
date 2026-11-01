@@ -39,6 +39,7 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 - `build.sh`: packaging, compilation, alignment, signing and verification.
 - `scripts/wireless-debugging`: Termux command wrapper.
 - `scripts/adb-local-check`: shared bounded local ADB discovery and verification helper.
+- `scripts/install-scripts.sh` and `Makefile`: `make install` copies the user-facing scripts to `$HOME/bin`.
 - `examples/reboot.sh`: local wireless ADB reboot integration example.
 - `build/` and `dist/`: generated files, excluded from source control.
 
@@ -282,22 +283,22 @@ python -m venv "$HOME/.venvs/adb-discovery"
 "$HOME/.venvs/adb-discovery/bin/python" -m pip install zeroconf
 ```
 
-From the repository root, install the command in `$HOME/bin`:
+From the repository root, install or update the scripts in `$HOME/bin`:
 
 ```sh
-mkdir -p "$HOME/bin"
-install -m 700 scripts/wireless-debugging "$HOME/bin/wireless-debugging"
-install -m 700 scripts/adb-local-check "$HOME/bin/adb-local-check"
+make install
 ```
 
-If `$HOME/bin` is not on your `PATH`, add it (for example to `~/.bashrc`) and reload the shell:
+This copies `scripts/wireless-debugging`, `scripts/adb-local-check` and `examples/reboot.sh` (installed as `reboot`) to `$HOME/bin` with owner-only executable permissions (`700`). Without `make`, run `bash scripts/install-scripts.sh` instead. All sources are validated and staged before any destination file is replaced, so a missing source fails with an error and leaves existing commands unchanged. Rerun the same command after pulling a new version to update the scripts; this replaces existing commands at those paths, so back up customized versions first. To use another destination (for example for host tests), set `BINDIR`: `make install BINDIR=/path/to/dir`.
+
+Script installation never runs the scripts (including `reboot`), connects to ADB, installs or updates the APK, creates or changes tokens or keys, changes Android permissions or installs dependencies. APK installation is a separate step, described in [Build and install the app](#build-and-install-the-app), using `adb -s TARGET install -r dist/wireless-debugging.apk` with a verified `TARGET`.
+
+`$HOME/bin` must be on your `PATH`. If it is not, add it (for example to `~/.bashrc`) and reload the shell:
 
 ```sh
 echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
 export PATH="$HOME/bin:$PATH"
 ```
-
-This replaces an existing command at that path. Back up a customized version first.
 
 **Migrating from an earlier install location.** Inspect existing copies of the commands before changing anything; this only lists them and does not delete or run them:
 
@@ -353,6 +354,8 @@ Behavior:
 - Results: `available`; `not verified` with the observed reason (missing dependencies, discovery failure, timeout, `unauthorized`, `offline`, or no usable local port). No discovered service is not proof that pairing was lost.
 - `WIRELESS_DEBUGGING_TIMEOUT` (default 15) and `WIRELESS_DEBUGGING_CHECK_TIMEOUT` (default 30) each accept only 1-300 decimal seconds, with at most three digits; leading zeroes are accepted and normalized as decimal. Zero, empty, non-decimal, overlong and out-of-range values are rejected. The ADB check timeout is one global deadline including dependency imports, server startup, discovery, connect and `get-state`; the app timeout bounds only the app request.
 
+**DeX and SSH.** The commands run in Termux on the phone, including when Termux is reached over SSH. `127.0.0.1` there refers to the phone's own Termux environment, not the SSH client computer. The user reports that operation works in Samsung DeX and in a remote SSH terminal; this was not independently verified, has no automated test coverage, and nothing is established about behavior after inactivity or reboot.
+
 Example output of `wireless-debugging on`:
 
 ```text
@@ -369,7 +372,7 @@ Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operati
 
 On app failure (rejected token, missing WRITE_SECURE_SETTINGS, app-request timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
-**Update after upgrading.** Reinstall the APK (`adb -s TARGET install -r dist/wireless-debugging.apk` as described in [Build and install the app](#build-and-install-the-app); with an unchanged signing identity the token and permission are kept) and reinstall both scripts with the `install -m 700` commands above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
+**Update after upgrading.** Reinstall the APK (`adb -s TARGET install -r dist/wireless-debugging.apk` as described in [Build and install the app](#build-and-install-the-app); with an unchanged signing identity the token and permission are kept) and update the scripts with `make install` (to `$HOME/bin`; this is separate from the APK update). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
 ### Control interface
 
@@ -385,7 +388,7 @@ Host checks (bash, JDK; python3 optional; no Android needed). They use fake `am`
 bash tests/run-tests.sh
 ```
 
-Source-text UI checks are structural assertions only, not functional Android tests. The Java protocol tests and wrapper integration checks use fake tools; concurrent-request checks cover nonce correlation in host test doubles only, not Android broadcast scheduling or real concurrent device operations. Fake build-tool checks exercise stale-artifact cleanup, signing-state safety and atomic publication, not Android compilation or a valid installable APK. The suite does **not** compile Android activities/receiver, exercise real Termux `am`, install or run the APK on a device, test inactivity/authorization behavior, or execute the reboot example. Those require a real Android/Termux device and the build tools.
+Source-text UI checks are structural assertions only, not functional Android tests. The Java protocol tests and wrapper integration checks use fake tools; concurrent-request checks cover nonce correlation in host test doubles only, not Android broadcast scheduling or real concurrent device operations. Fake build-tool checks exercise stale-artifact cleanup, signing-state safety and atomic publication, not Android compilation or a valid installable APK. `tests/install-test.sh` (run by `tests/run-tests.sh`) checks script installation into a temporary `BINDIR`: first install, update, executable permissions, paths with spaces and missing-source failure without partial updates. The suite does **not** compile Android activities/receiver, exercise real Termux `am`, install or run the APK on a device, test inactivity/authorization behavior, or execute the reboot example. Those require a real Android/Termux device and the build tools.
 
 ## Example: reboot this phone over wireless ADB
 

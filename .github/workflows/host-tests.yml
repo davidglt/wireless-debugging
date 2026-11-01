@@ -26,9 +26,10 @@ jobs:
       - name: Bash syntax and static checks
         run: |
           bash -n build.sh scripts/wireless-debugging scripts/adb-local-check \
-            examples/reboot.sh tests/run-tests.sh tests/build-test.sh
+            examples/reboot.sh scripts/install-scripts.sh tests/run-tests.sh \
+            tests/build-test.sh tests/install-test.sh
           shellcheck -S warning build.sh scripts/wireless-debugging \
-            scripts/adb-local-check examples/reboot.sh tests/run-tests.sh \
-            tests/build-test.sh
+            scripts/adb-local-check examples/reboot.sh scripts/install-scripts.sh \
+            tests/run-tests.sh tests/build-test.sh tests/install-test.sh
       - name: Host tests
         run: bash tests/run-tests.sh
