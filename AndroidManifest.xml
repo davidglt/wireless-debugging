@@ -35,5 +35,10 @@
 
         </activity>
 
+        <!-- Exported so Termux can call it; every request needs the private token. -->
+        <receiver
+            android:name=".ControlReceiver"
+            android:exported="true" />
+
     </application>
 </manifest>

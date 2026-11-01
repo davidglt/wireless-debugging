@@ -8,7 +8,6 @@ package local.termux.wirelessdebugging;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -20,16 +19,12 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 
 public final class MainActivity extends Activity {
-    private static final String CONTROL_ACTION =
-            "local.termux.wirelessdebugging.CONTROL";
-    private static final String SETTING = "adb_wifi_enabled";
-    private static final String PREFS = "private_settings";
-    private static final String TOKEN_KEY = "control_token";
+    static final String SETTING = "adb_wifi_enabled";
+    static final String PREFS = "private_settings";
+    static final String TOKEN_KEY = "control_token";
 
     private TextView statusView;
     private TextView tokenView;
@@ -39,11 +34,6 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-
-        if (CONTROL_ACTION.equals(getIntent().getAction())) {
-            handleControl(getIntent());
-            return;
-        }
 
         showInterface();
     }
@@ -107,40 +97,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void handleControl(Intent intent) {
-        try {
-            String expected = preferences().getString(TOKEN_KEY, null);
-            String supplied = intent.getStringExtra("token");
-
-            if (expected == null || supplied == null
-                    || supplied.length() != expected.length()
-                    || !MessageDigest.isEqual(
-                            expected.getBytes(StandardCharsets.UTF_8),
-                            supplied.getBytes(StandardCharsets.UTF_8))) {
-                throw new SecurityException("Invalid control token.");
-            }
-
-            String operation = intent.getStringExtra("operation");
-
-            if ("on".equals(operation)) {
-                setEnabled(true);
-                notifyUser("Wireless debugging enable request saved.");
-            } else if ("off".equals(operation)) {
-                setEnabled(false);
-                notifyUser("Wireless debugging disable request saved.");
-            } else if ("status".equals(operation)) {
-                notifyUser(stateDescription());
-            } else {
-                throw new IllegalArgumentException(
-                        "Operation must be on, off, or status.");
-            }
-        } catch (RuntimeException error) {
-            notifyUser("Error: " + error.getMessage());
-        } finally {
-            finish();
-        }
-    }
-
     private String stateDescription() {
         int state = readState();
 
@@ -199,6 +155,16 @@ public final class MainActivity extends Activity {
                 + "Android may still require network approval.\n"
                 + "An ON setting does not guarantee that ADB is reachable.");
         layout.addView(warning);
+
+        TextView credits = new TextView(this);
+        credits.setText(
+                "\n\nCredits\n"
+                + "Wireless Debugging\n"
+                + "Author: David González López-Tercero\n"
+                + "Copyright (C) 2026 David González López-Tercero\n"
+                + "License: GNU GPL v3 or later");
+        credits.setTextIsSelectable(true);
+        layout.addView(credits);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(layout);

@@ -39,12 +39,109 @@ if ! command -v am >/dev/null 2>&1; then
     exit 1
 fi
 
-am start --user 0 \
-    -n local.termux.wirelessdebugging/.MainActivity \
+TIMEOUT_SECONDS="${WIRELESS_DEBUGGING_TIMEOUT:-15}"
+
+if [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( TIMEOUT_SECONDS < 1 )); then
+    echo "Error: WIRELESS_DEBUGGING_TIMEOUT must be a positive integer." >&2
+    exit 1
+fi
+
+if ! command -v timeout >/dev/null 2>&1; then
+    echo "Error: 'timeout' was not found (pkg install coreutils)." >&2
+    exit 1
+fi
+
+NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+
+if [[ ! "$NONCE" =~ ^[0-9a-f]{32}$ ]]; then
+    echo "Error: could not create a request identifier." >&2
+    exit 1
+fi
+
+# An ordered broadcast returns its result code and data on stdout, unlike
+# "am start". The response is correlated with this request using NONCE.
+STATUS=0
+OUTPUT="$(timeout "$TIMEOUT_SECONDS" am broadcast --user 0 \
+    -n local.termux.wirelessdebugging/.ControlReceiver \
     -a local.termux.wirelessdebugging.CONTROL \
     --es operation "$OPERATION" \
-    --es token "$TOKEN"
+    --es nonce "$NONCE" \
+    --es token "$TOKEN" 2>&1)" || STATUS=$?
 
 unset TOKEN
 
-printf 'Request sent: %s\n' "$OPERATION"
+if (( STATUS == 124 )); then
+    printf 'Error: no response within %s seconds.\n' "$TIMEOUT_SECONDS" >&2
+    exit 1
+fi
+
+if (( STATUS != 0 )); then
+    echo "Error: Android activity manager command failed." >&2
+    exit 1
+fi
+
+RESPONSE_RE='wd1 nonce=([0-9a-f]{32}|none)( [a-z_]+=[a-z0-9_]+)*'
+
+if [[ ! "$OUTPUT" =~ $RESPONSE_RE ]]; then
+    echo "Error: no valid response from the app (is it installed, opened once, and up to date?)." >&2
+    exit 1
+fi
+
+RESPONSE="${BASH_REMATCH[0]}"
+
+if [[ " $RESPONSE " != *" nonce=$NONCE "* ]]; then
+    echo "Error: response did not match this request." >&2
+    exit 1
+fi
+
+field() {
+    local WANTED="$1" PAIR
+    for PAIR in $RESPONSE; do
+        if [[ "$PAIR" == "$WANTED="* ]]; then
+            printf '%s' "${PAIR#*=}"
+            return 0
+        fi
+    done
+    return 0
+}
+
+REQUEST_STATE="$(field setting)"
+PERMISSION="$(field permission)"
+
+case "$REQUEST_STATE" in
+    1) SETTING_TEXT="ON" ;;
+    0) SETTING_TEXT="OFF" ;;
+    *) SETTING_TEXT="UNKNOWN" ;;
+esac
+
+if [[ "$(field status)" != "ok" ]]; then
+    ERROR="$(field error)"
+    case "$ERROR" in
+        unauthorized) MESSAGE="control token was rejected by the app" ;;
+        permission_denied) MESSAGE="WRITE_SECURE_SETTINGS has not been granted" ;;
+        write_failed) MESSAGE="the system setting could not be updated" ;;
+        invalid_operation) MESSAGE="operation rejected by the app" ;;
+        *) MESSAGE="request failed (${ERROR:-unknown})" ;;
+    esac
+    printf 'Error: %s.\n' "$MESSAGE" >&2
+    if [[ -n "$PERMISSION" ]]; then
+        printf 'adb_wifi_enabled setting: %s\n' "$SETTING_TEXT" >&2
+    fi
+    exit 1
+fi
+
+if [[ "$OPERATION" != "status" ]]; then
+    EXPECTED=1
+    [[ "$OPERATION" == "off" ]] && EXPECTED=0
+    if [[ "$REQUEST_STATE" != "$EXPECTED" ]]; then
+        printf 'Error: setting was not changed; observed adb_wifi_enabled: %s.\n' \
+            "$SETTING_TEXT" >&2
+        exit 1
+    fi
+fi
+
+printf 'Operation: %s\n' "$OPERATION"
+printf 'Result: success\n'
+printf 'adb_wifi_enabled setting (observed): %s\n' "$SETTING_TEXT"
+printf 'Required permission: %s\n' "$PERMISSION"
+echo "Note: this is the requested system setting only; ADB reachability is not verified."
