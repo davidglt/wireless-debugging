@@ -2,7 +2,7 @@
 # Copyright (C) 2026 David González López-Tercero
 # Author: David González López-Tercero
 # SPDX-License-Identifier: GPL-3.0-or-later
-# See LICENSE and NOTICE in the repository root for licensing details.
+# See LICENSE in the repository root for licensing details.
 #
 # Copies the user-facing scripts into BINDIR (default: $HOME/bin). Rerunning
 # updates them. It never runs the scripts, uses ADB, installs the APK, touches
