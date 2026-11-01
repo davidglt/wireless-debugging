@@ -87,13 +87,16 @@ exit 0
 ADB
 chmod +x "$WORK/bin/adb"
 export FAKE_ADB_LOG="$WORK/adb.log"
+export FAKE_PYTHON_LOG="$WORK/python.log"
 : > "$FAKE_ADB_LOG"
+: > "$FAKE_PYTHON_LOG"
 
 # Fake discovery interpreter: prints FAKE_PORTS (space separated) after
 # FAKE_DISCOVERY_DELAY seconds; "import zeroconf" fails if FAKE_NO_ZEROCONF=1.
 mkdir -p "$WORK/home/.venvs/adb-discovery/bin"
 cat > "$WORK/home/.venvs/adb-discovery/bin/python" <<'PYFAKE'
 #!/usr/bin/env bash
+echo "$*" >> "$FAKE_PYTHON_LOG"
 if [[ "$1" == -c && "$2" == 'import zeroconf' ]]; then
     [[ "${FAKE_NO_ZEROCONF:-0}" != 1 ]]; exit
 fi
@@ -147,19 +150,22 @@ FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" \
 FAKE_AM_DELAY=3 WIRELESS_DEBUGGING_TIMEOUT=1 \
     expect version-timeout 1 '^$' 'no response within' -- "${CMD[@]}" --version
 expect bad-usage 1 '^$' 'Usage' -- "${CMD[@]}" reboot
+expect removed-check-command 1 '^$' 'Usage: wireless-debugging \{on\|off\|status\|--version\}' \
+    -- "${CMD[@]}" check
+expect unsupported-strict-option 1 '^$' 'Usage' -- "${CMD[@]}" --strict
 
 # --- ADB check ---
 export FAKE_PORTS="40123" FAKE_ADB_STATES="40123=device"
 NO_FORBIDDEN='! grep -Eq "^(kill-server|disconnect|pair|reboot|-s [^ ]+ reboot|install|shell)" "$1"'
 : > "$FAKE_ADB_LOG"
-expect check-available 0 'ADB check: available.*ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" check
+expect status-adb-available 0 'ADB check: available.*ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" status
 if ! grep -q '^connect 127.0.0.1:40123$' "$FAKE_ADB_LOG" \
    || ! grep -q '^-s 127.0.0.1:40123 get-state$' "$FAKE_ADB_LOG"; then
-    echo 'FAIL: check did not connect/get-state the specific local target' >&2; FAILED=1
+    echo 'FAIL: status did not connect/get-state the specific local target' >&2; FAILED=1
 fi
 bash -c "$NO_FORBIDDEN" _ "$FAKE_ADB_LOG" \
-    || { echo 'FAIL: check ran a forbidden adb command' >&2; FAILED=1; }
-expect check-no-setting-change 0 'observed\): OFF' '^$' -- "${CMD[@]}" check
+    || { echo 'FAIL: status ran a forbidden adb command' >&2; FAILED=1; }
+expect status-no-setting-change 0 'observed\): OFF' '^$' -- "${CMD[@]}" status
 expect on-reports-check 0 'observed\): ON.*ADB check: available' '^$' -- "${CMD[@]}" on
 expect status-reports-check 0 'ADB check: available' '^$' -- "${CMD[@]}" status
 : > "$FAKE_ADB_LOG"
@@ -168,35 +174,38 @@ expect off-no-adb 0 'ADB connectivity was not checked' '^$' -- "${CMD[@]}" off
 : > "$FAKE_ADB_LOG"
 expect version-no-adb 0 '^App version' '^$' -- "${CMD[@]}" --version
 [[ ! -s "$FAKE_ADB_LOG" ]] || { echo 'FAIL: --version used adb' >&2; FAILED=1; }
+: > "$FAKE_PYTHON_LOG"
+expect version-no-discovery 0 '^App version' '^$' -- "${CMD[@]}" --version
+[[ ! -s "$FAKE_PYTHON_LOG" ]] || { echo 'FAIL: --version used Python/discovery' >&2; FAILED=1; }
 FAKE_AM_STATE="$WORK/state" FAKE_PORTS="" expect on-setting-on-adb-unavailable 0 \
     'Result: success.*observed\): ON.*ADB check: not verified \(no local connect service found' '^$' -- "${CMD[@]}" on
-FAKE_PORTS="" expect check-no-service 1 'not verified' 'could not verify' -- "${CMD[@]}" check
-FAKE_PORTS="1 70000 abc 22 40123" expect check-invalid-ports 0 'available.*40123' '^$' -- "${CMD[@]}" check
-FAKE_PORTS="1 70000 abc" expect check-only-invalid-ports 1 'no local connect service found' 'could not verify' -- "${CMD[@]}" check
+FAKE_PORTS="" expect status-no-service 0 'ADB check: not verified \(no local connect service found' '^$' -- "${CMD[@]}" status
+FAKE_PORTS="1 70000 abc 22 40123" expect status-invalid-ports 0 'available.*40123' '^$' -- "${CMD[@]}" status
+FAKE_PORTS="1 70000 abc" expect status-only-invalid-ports 0 'no local connect service found' '^$' -- "${CMD[@]}" status
 FAKE_PORTS="40001 40002 40123" FAKE_ADB_STATES="40123=device" \
-    expect check-multiple-ports 0 'ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" check
-FAKE_ADB_STATES="40123=unauthorized" expect check-unauthorized 1 'unauthorized on 127\.0\.0\.1:40123' 'could not verify' -- "${CMD[@]}" check
-FAKE_ADB_STATES="40123=offline" expect check-offline 1 'offline on 127\.0\.0\.1:40123' 'could not verify' -- "${CMD[@]}" check
+    expect status-multiple-ports 0 'ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" status
+FAKE_ADB_STATES="40123=unauthorized" expect status-unauthorized 0 'unauthorized on 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" status
+FAKE_ADB_STATES="40123=offline" expect status-offline 0 'offline on 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" status
 # An unrelated transport that reports "device" must not count as success.
-FAKE_ADB_STATES="" expect check-unrelated-transport 1 'no discovered local port gave a usable ADB device' 'could not verify' -- "${CMD[@]}" check
-FAKE_NO_ZEROCONF=1 expect check-no-zeroconf 1 'missing dependencies: zeroconf' 'could not verify' -- "${CMD[@]}" check
-FAKE_DISCOVERY_FAIL=1 expect check-discovery-failed 1 'service discovery failed' 'could not verify' -- "${CMD[@]}" check
+FAKE_ADB_STATES="" expect status-unrelated-transport 0 'no discovered local port gave a usable ADB device' '^$' -- "${CMD[@]}" status
+FAKE_NO_ZEROCONF=1 expect status-no-zeroconf 0 'missing dependencies: zeroconf' '^$' -- "${CMD[@]}" status
+FAKE_DISCOVERY_FAIL=1 expect status-discovery-failed 0 'service discovery failed' '^$' -- "${CMD[@]}" status
 FAKE_DISCOVERY_DELAY=10 WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
-    expect check-discovery-timeout 1 'service discovery timed out' 'could not verify' -- "${CMD[@]}" check
+    expect status-discovery-timeout 0 'service discovery timed out' '^$' -- "${CMD[@]}" status
 FAKE_ADB_HANG=connect WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
-    expect check-connect-timeout 1 'timed out' 'could not verify' -- "${CMD[@]}" check
+    expect status-connect-timeout 0 'timed out' '^$' -- "${CMD[@]}" status
 FAKE_ADB_HANG=start-server WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
-    expect check-start-timeout 1 'not verified' 'could not verify' -- "${CMD[@]}" check
-WIRELESS_DEBUGGING_CHECK_TIMEOUT=0 expect check-timeout-invalid 1 '^$' 'CHECK_TIMEOUT must be' -- "${CMD[@]}" check
+    expect status-start-timeout 0 'not verified' '^$' -- "${CMD[@]}" status
+WIRELESS_DEBUGGING_CHECK_TIMEOUT=0 expect status-timeout-invalid 1 '^$' 'CHECK_TIMEOUT must be' -- "${CMD[@]}" status
 WIRELESS_DEBUGGING_CHECK_TIMEOUT=abc expect on-timeout-invalid 1 '^$' 'CHECK_TIMEOUT must be' -- "${CMD[@]}" on
 WIRELESS_DEBUGGING_CHECK_TIMEOUT=abc expect version-ignores-check-timeout 0 '^App version' '^$' -- "${CMD[@]}" --version
-FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" expect check-app-failure 1 '^$' 'token was rejected' -- "${CMD[@]}" check
+FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" expect status-app-failure 1 '^$' 'token was rejected' -- "${CMD[@]}" status
 # Missing adb: PATH without adb (keep am, timeout and basic tools).
 mkdir -p "$WORK/noadb"
 for T in am timeout bash od tr cat sleep java dirname env; do
     ln -sf "$(command -v "$T")" "$WORK/noadb/$T"
 done
-PATH="$WORK/noadb" expect check-no-adb 1 'missing dependencies: adb' 'could not verify' -- "${CMD[@]}" check
+PATH="$WORK/noadb" expect status-no-adb 0 'missing dependencies: adb' '^$' -- "${CMD[@]}" status
 PATH="$WORK/noadb" expect on-no-adb 0 'Result: success.*ADB check: not verified \(missing dependencies: adb' '^$' -- "${CMD[@]}" on
 echo 0 > "$WORK/state"
 
@@ -227,7 +236,7 @@ STUB
     printf '#!/usr/bin/env bash\nPYTHONPATH="%s/stub" exec python3 "$@"\n' "$WORK" \
         > "$HOME/.venvs/adb-discovery/bin/python"
     STUB_PORTS="22 41000 70000 41001 41000" FAKE_ADB_STATES="41001=device" \
-        expect check-real-discovery-code 0 'ADB target: 127\.0\.0\.1:41001' '^$' -- "${CMD[@]}" check
+        expect status-real-discovery-code 0 'ADB target: 127\.0\.0\.1:41001' '^$' -- "${CMD[@]}" status
     if grep -Eq 'connect 127\.0\.0\.1:(22|70000)$' "$FAKE_ADB_LOG"; then
         echo 'FAIL: invalid port was tried' >&2; FAILED=1
     fi

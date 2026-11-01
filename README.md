@@ -310,15 +310,13 @@ Usage:
 wireless-debugging on
 wireless-debugging off
 wireless-debugging status
-wireless-debugging check
 wireless-debugging --version
 ```
 
 Behavior:
 
-- `on` and `status` run the app operation and, if it succeeds, a bounded ADB check. `off` changes the setting and never checks or connects. `--version` only asks the app for its version; it never uses `adb`, Python or discovery.
-- `check` queries the app state without changing the setting (it sends `status`) and then verifies a usable local ADB transport.
-- The observed `adb_wifi_enabled` setting and the ADB check are reported separately. An ADB check that is not verified does not turn a successful `on`/`status` into a failure.
+- `on` requests activation and `status` queries the app's setting, permission and installed version. Both perform a bounded ADB check after a successful app response. `off` changes the setting and never checks or connects. `--version` only asks the app for its version; it never uses `adb`, Python or discovery.
+- The app operation result, observed `adb_wifi_enabled` setting and ADB connectivity verification are reported separately. `ADB check: available` is printed only when a specific discovered local target reports `device`; otherwise the output says `ADB check: not verified` with the observed reason. An unverified ADB check does not turn a successful `on`/`status` app operation into a failure.
 - The ADB check browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates each advertised connection port (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. For each port it runs `adb connect 127.0.0.1:PORT` and `adb -s 127.0.0.1:PORT get-state`, and requires `device`. Other USB/remote transports already known to adb do not count.
 - It does not pair, reboot, run `adb kill-server`, disconnect other devices, touch ADB keys, change security settings, download or install anything. The adb client server may be started if needed.
 - Results: `available`; `not verified` with the observed reason (missing dependencies, discovery failure, timeout, `unauthorized`, `offline`, or no usable local port). No discovered service is not proof that pairing was lost.
@@ -336,7 +334,7 @@ ADB check: available
 ADB target: 127.0.0.1:41234
 ```
 
-Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operation succeeded (the ADB check result is on standard output only). `check` exits 0 only when the local transport is verified as `device`, and 1 otherwise. All commands exit 1 on usage errors, invalid timeouts, token/app/protocol errors, timeouts or no response; messages go to standard error.
+Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operation or query succeeds. For `on` and `status`, an unverified ADB check is reported on standard output and does not change the successful exit status. All commands exit 1 on usage errors, invalid timeouts, token/app/protocol errors, timeouts or no response; messages go to standard error.
 
 On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
