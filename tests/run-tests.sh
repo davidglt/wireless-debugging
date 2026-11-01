@@ -2,7 +2,7 @@
 # Copyright (C) 2026 David González López-Tercero
 # Author: David González López-Tercero
 # SPDX-License-Identifier: GPL-3.0-or-later
-# See LICENSE and NOTICE in the repository root for licensing details.
+# See LICENSE in the repository root for licensing details.
 #
 # Host-side checks (no Android device needed). Requires bash, javac and java.
 # The Android receiver, aapt2/d8 build and real Termux "am" are NOT covered.
