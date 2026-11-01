@@ -259,10 +259,26 @@ The interface should appear. `Starting: Intent ...` alone is not confirmation. T
 
 ## Install the Termux command
 
-From the repository root:
+Install the runtime dependencies and the isolated discovery environment (`android-tools` provides `adb`, `coreutils` provides `timeout`, and `zeroconf` is installed only in the venv):
 
 ```sh
-install -m 700 scripts/wireless-debugging "$PREFIX/bin/wireless-debugging"
+pkg install android-tools python coreutils
+python -m venv "$HOME/.venvs/adb-discovery"
+"$HOME/.venvs/adb-discovery/bin/python" -m pip install zeroconf
+```
+
+From the repository root, install the command in the user-local directory:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 700 scripts/wireless-debugging "$HOME/.local/bin/wireless-debugging"
+```
+
+If `$HOME/.local/bin` is not on your `PATH`, add it (for example to `~/.bashrc`) and reload the shell:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 This replaces an existing command at that path. Back up a customized version first.
@@ -294,10 +310,21 @@ Usage:
 wireless-debugging on
 wireless-debugging off
 wireless-debugging status
+wireless-debugging check
 wireless-debugging --version
 ```
 
-Each command prints a readable result on standard output and exits 0, for example:
+Behavior:
+
+- `on` and `status` run the app operation and, if it succeeds, a bounded ADB check. `off` changes the setting and never checks or connects. `--version` only asks the app for its version; it never uses `adb`, Python or discovery.
+- `check` queries the app state without changing the setting (it sends `status`) and then verifies a usable local ADB transport.
+- The observed `adb_wifi_enabled` setting and the ADB check are reported separately. An ADB check that is not verified does not turn a successful `on`/`status` into a failure.
+- The ADB check browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates each advertised connection port (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. For each port it runs `adb connect 127.0.0.1:PORT` and `adb -s 127.0.0.1:PORT get-state`, and requires `device`. Other USB/remote transports already known to adb do not count.
+- It does not pair, reboot, run `adb kill-server`, disconnect other devices, touch ADB keys, change security settings, download or install anything. The adb client server may be started if needed.
+- Results: `available`; `not verified` with the observed reason (missing dependencies, discovery failure, timeout, `unauthorized`, `offline`, or no usable local port). No discovered service is not proof that pairing was lost.
+- `WIRELESS_DEBUGGING_CHECK_TIMEOUT` (integer 1-300 seconds, default 30) bounds the whole ADB check including discovery and all connection attempts. `WIRELESS_DEBUGGING_TIMEOUT` still bounds the app request.
+
+Example output of `wireless-debugging on`:
 
 ```text
 Operation: on
@@ -305,10 +332,13 @@ Result: success
 adb_wifi_enabled setting (observed): ON
 Required permission: granted
 App version: 1.0 (code 1)
-Note: this is the requested system setting only; ADB reachability is not verified.
+ADB check: available
+ADB target: 127.0.0.1:41234
 ```
 
-On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero. The reported value is the `adb_wifi_enabled` setting read back by the app after the request; it is not proof that ADB is reachable. Set `WIRELESS_DEBUGGING_TIMEOUT` (seconds, default 15) to change the wait limit. `timeout` (package `coreutils`) is required.
+Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operation succeeded (the ADB check result is on standard output only). `check` exits 0 only when the local transport is verified as `device`, and 1 otherwise. All commands exit 1 on usage errors, invalid timeouts, token/app/protocol errors, timeouts or no response; messages go to standard error.
+
+On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
 **Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall the script with the `install -m 700` command above. Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
@@ -320,7 +350,7 @@ The wrapper sends an explicit ordered broadcast with `am broadcast` to `local.te
 
 ### Testing
 
-Host checks (bash, JDK; no Android needed):
+Host checks (bash, JDK; python3 optional; no Android needed). They use fake `am`, `adb` and discovery interpreters, so they do not verify real Termux, a device or Android compilation:
 
 ```sh
 bash tests/run-tests.sh
@@ -338,7 +368,8 @@ Install runtime dependencies and the isolated discovery environment in Termux:
 pkg install android-tools python coreutils
 python -m venv "$HOME/.venvs/adb-discovery"
 "$HOME/.venvs/adb-discovery/bin/python" -m pip install zeroconf
-install -m 700 examples/reboot.sh "$PREFIX/bin/wireless-reboot"
+mkdir -p "$HOME/.local/bin"
+install -m 700 examples/reboot.sh "$HOME/.local/bin/wireless-reboot"
 ```
 
 The example uses `adb`, `timeout`, the installed `wireless-debugging` wrapper, and Python with `zeroconf` at `$HOME/.venvs/adb-discovery/bin/python`. Configure the app permission, Termux special access and private token first. An authorized initial ADB connection is still required for the permission grant.
