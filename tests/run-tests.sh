@@ -412,4 +412,7 @@ doc_check 'release notes list manifest version' \
 if ! bash "$ROOT/tests/build-test.sh"; then
     FAILED=1
 fi
+if ! bash "$ROOT/tests/install-test.sh"; then
+    FAILED=1
+fi
 exit "$FAILED"
