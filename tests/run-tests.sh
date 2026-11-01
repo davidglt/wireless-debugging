@@ -49,6 +49,47 @@ exec java -cp "$WORK/classes" local.termux.wirelessdebugging.FakeAm "\$@"
 AM
 chmod +x "$WORK/bin/am"
 
+# Fake adb: logs every call; FAKE_ADB_STATES="PORT=state ..." gives the
+# get-state result per 127.0.0.1 target (anything else: device not found);
+# FAKE_ADB_HANG=<subcommand> makes that subcommand block. A bare get-state
+# reports "device" to model an unrelated USB/remote transport.
+cat > "$WORK/bin/adb" <<'ADB'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_ADB_LOG"
+[[ "${FAKE_ADB_HANG:-}" == "$1" ]] && exec sleep 30
+case "$1" in
+    start-server) exit "${FAKE_ADB_START_STATUS:-0}" ;;
+    connect) echo "connected to $2"; exit 0 ;;
+    get-state)
+        echo device; exit 0 ;;
+    -s)
+        if [[ "$3" == get-state ]]; then
+            for PAIR in ${FAKE_ADB_STATES:-}; do
+                if [[ "127.0.0.1:${PAIR%%=*}" == "$2" ]]; then echo "${PAIR#*=}"; exit 0; fi
+            done
+            echo 'error: device not found' >&2; exit 1
+        fi ;;
+esac
+exit 0
+ADB
+chmod +x "$WORK/bin/adb"
+export FAKE_ADB_LOG="$WORK/adb.log"
+: > "$FAKE_ADB_LOG"
+
+# Fake discovery interpreter: prints FAKE_PORTS (space separated) after
+# FAKE_DISCOVERY_DELAY seconds; "import zeroconf" fails if FAKE_NO_ZEROCONF=1.
+mkdir -p "$WORK/home/.venvs/adb-discovery/bin"
+cat > "$WORK/home/.venvs/adb-discovery/bin/python" <<'PYFAKE'
+#!/usr/bin/env bash
+if [[ "$1" == -c && "$2" == 'import zeroconf' ]]; then
+    [[ "${FAKE_NO_ZEROCONF:-0}" != 1 ]]; exit
+fi
+[[ "${FAKE_DISCOVERY_FAIL:-0}" == 1 ]] && exit 3
+[[ -n "${FAKE_DISCOVERY_DELAY:-}" ]] && { sleep "$FAKE_DISCOVERY_DELAY"; }
+for PORT in ${FAKE_PORTS:-}; do echo "$PORT"; done
+PYFAKE
+chmod +x "$WORK/home/.venvs/adb-discovery/bin/python"
+
 TOKEN="$(printf 'c%.0s' {1..64})"
 export HOME="$WORK/home"
 export PATH="$WORK/bin:$PATH"
@@ -78,7 +119,6 @@ expect status 0 'setting \(observed\): OFF' '^$' -- "${CMD[@]}" status
 expect on 0 'setting \(observed\): ON' '^$' -- "${CMD[@]}" on
 expect status-after-on 0 'observed\): ON' '^$' -- "${CMD[@]}" status
 expect off 0 'setting \(observed\): OFF' '^$' -- "${CMD[@]}" off
-expect reachability-note 0 'ADB reachability is not verified' '^$' -- "${CMD[@]}" status
 expect status-version 0 'App version: 1.2.3 \(code 12\)' '^$' -- "${CMD[@]}" status
 expect on-version 0 'App version: 1.2.3 \(code 12\)' '^$' -- "${CMD[@]}" on
 echo 0 > "$WORK/state"
@@ -94,6 +134,93 @@ FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" \
 FAKE_AM_DELAY=3 WIRELESS_DEBUGGING_TIMEOUT=1 \
     expect version-timeout 1 '^$' 'no response within' -- "${CMD[@]}" --version
 expect bad-usage 1 '^$' 'Usage' -- "${CMD[@]}" reboot
+
+# --- ADB check ---
+export FAKE_PORTS="40123" FAKE_ADB_STATES="40123=device"
+NO_FORBIDDEN='! grep -Eq "^(kill-server|disconnect|pair|reboot|-s [^ ]+ reboot|install|shell)" "$1"'
+: > "$FAKE_ADB_LOG"
+expect check-available 0 'ADB check: available.*ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" check
+if ! grep -q '^connect 127.0.0.1:40123$' "$FAKE_ADB_LOG" \
+   || ! grep -q '^-s 127.0.0.1:40123 get-state$' "$FAKE_ADB_LOG"; then
+    echo 'FAIL: check did not connect/get-state the specific local target' >&2; FAILED=1
+fi
+bash -c "$NO_FORBIDDEN" _ "$FAKE_ADB_LOG" \
+    || { echo 'FAIL: check ran a forbidden adb command' >&2; FAILED=1; }
+expect check-no-setting-change 0 'observed\): OFF' '^$' -- "${CMD[@]}" check
+expect on-reports-check 0 'observed\): ON.*ADB check: available' '^$' -- "${CMD[@]}" on
+expect status-reports-check 0 'ADB check: available' '^$' -- "${CMD[@]}" status
+: > "$FAKE_ADB_LOG"
+expect off-no-adb 0 'ADB connectivity was not checked' '^$' -- "${CMD[@]}" off
+[[ ! -s "$FAKE_ADB_LOG" ]] || { echo 'FAIL: off used adb' >&2; FAILED=1; }
+: > "$FAKE_ADB_LOG"
+expect version-no-adb 0 '^App version' '^$' -- "${CMD[@]}" --version
+[[ ! -s "$FAKE_ADB_LOG" ]] || { echo 'FAIL: --version used adb' >&2; FAILED=1; }
+FAKE_AM_STATE="$WORK/state" FAKE_PORTS="" expect on-setting-on-adb-unavailable 0 \
+    'Result: success.*observed\): ON.*ADB check: not verified \(no local connect service found' '^$' -- "${CMD[@]}" on
+FAKE_PORTS="" expect check-no-service 1 'not verified' 'could not verify' -- "${CMD[@]}" check
+FAKE_PORTS="1 70000 abc 22 40123" expect check-invalid-ports 0 'available.*40123' '^$' -- "${CMD[@]}" check
+FAKE_PORTS="1 70000 abc" expect check-only-invalid-ports 1 'no local connect service found' 'could not verify' -- "${CMD[@]}" check
+FAKE_PORTS="40001 40002 40123" FAKE_ADB_STATES="40123=device" \
+    expect check-multiple-ports 0 'ADB target: 127\.0\.0\.1:40123' '^$' -- "${CMD[@]}" check
+FAKE_ADB_STATES="40123=unauthorized" expect check-unauthorized 1 'unauthorized on 127\.0\.0\.1:40123' 'could not verify' -- "${CMD[@]}" check
+FAKE_ADB_STATES="40123=offline" expect check-offline 1 'offline on 127\.0\.0\.1:40123' 'could not verify' -- "${CMD[@]}" check
+# An unrelated transport that reports "device" must not count as success.
+FAKE_ADB_STATES="" expect check-unrelated-transport 1 'no discovered local port gave a usable ADB device' 'could not verify' -- "${CMD[@]}" check
+FAKE_NO_ZEROCONF=1 expect check-no-zeroconf 1 'missing dependencies: zeroconf' 'could not verify' -- "${CMD[@]}" check
+FAKE_DISCOVERY_FAIL=1 expect check-discovery-failed 1 'service discovery failed' 'could not verify' -- "${CMD[@]}" check
+FAKE_DISCOVERY_DELAY=10 WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
+    expect check-discovery-timeout 1 'service discovery timed out' 'could not verify' -- "${CMD[@]}" check
+FAKE_ADB_HANG=connect WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
+    expect check-connect-timeout 1 'timed out' 'could not verify' -- "${CMD[@]}" check
+FAKE_ADB_HANG=start-server WIRELESS_DEBUGGING_CHECK_TIMEOUT=2 \
+    expect check-start-timeout 1 'not verified' 'could not verify' -- "${CMD[@]}" check
+WIRELESS_DEBUGGING_CHECK_TIMEOUT=0 expect check-timeout-invalid 1 '^$' 'CHECK_TIMEOUT must be' -- "${CMD[@]}" check
+WIRELESS_DEBUGGING_CHECK_TIMEOUT=abc expect on-timeout-invalid 1 '^$' 'CHECK_TIMEOUT must be' -- "${CMD[@]}" on
+WIRELESS_DEBUGGING_CHECK_TIMEOUT=abc expect version-ignores-check-timeout 0 '^App version' '^$' -- "${CMD[@]}" --version
+FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" expect check-app-failure 1 '^$' 'token was rejected' -- "${CMD[@]}" check
+# Missing adb: PATH without adb (keep am, timeout and basic tools).
+mkdir -p "$WORK/noadb"
+for T in am timeout bash od tr cat sleep java dirname env; do
+    ln -sf "$(command -v "$T")" "$WORK/noadb/$T"
+done
+PATH="$WORK/noadb" expect check-no-adb 1 'missing dependencies: adb' 'could not verify' -- "${CMD[@]}" check
+PATH="$WORK/noadb" expect on-no-adb 0 'Result: success.*ADB check: not verified \(missing dependencies: adb' '^$' -- "${CMD[@]}" on
+echo 0 > "$WORK/state"
+
+# Run the script's real embedded discovery code against a stub zeroconf module
+# (only the _adb-tls-connect service type may be browsed; bad ports dropped).
+if command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$WORK/stub/zeroconf"
+    cat > "$WORK/stub/zeroconf/__init__.py" <<'STUB'
+import os
+class IPVersion: V4Only = 1
+class ServiceListener: pass
+class _Info:
+    def __init__(self, port): self.port = port
+class ServiceBrowser:
+    def __init__(self, zc, stype, listener):
+        assert stype == "_adb-tls-connect._tcp.local.", stype
+        for i, _ in enumerate(os.environ["STUB_PORTS"].split()):
+            listener.add_service(zc, stype, "svc%d" % i)
+    def cancel(self): pass
+class Zeroconf:
+    def __init__(self, ip_version=None): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def get_service_info(self, stype, name, timeout=0):
+        assert stype == "_adb-tls-connect._tcp.local.", stype
+        return _Info(int(os.environ["STUB_PORTS"].split()[int(name[3:])]))
+STUB
+    printf '#!/usr/bin/env bash\nPYTHONPATH="%s/stub" exec python3 "$@"\n' "$WORK" \
+        > "$HOME/.venvs/adb-discovery/bin/python"
+    STUB_PORTS="22 41000 70000 41001 41000" FAKE_ADB_STATES="41001=device" \
+        expect check-real-discovery-code 0 'ADB target: 127\.0\.0\.1:41001' '^$' -- "${CMD[@]}" check
+    if grep -Eq 'connect 127\.0\.0\.1:(22|70000)$' "$FAKE_ADB_LOG"; then
+        echo 'FAIL: invalid port was tried' >&2; FAILED=1
+    fi
+else
+    echo 'skipped: embedded discovery code test (python3 not found)'
+fi
 
 FAKE_AM_PERMISSION=0 expect missing-permission 1 '^$' 'WRITE_SECURE_SETTINGS' -- "${CMD[@]}" on
 FAKE_AM_TOKEN="$(printf 'd%.0s' {1..64})" \

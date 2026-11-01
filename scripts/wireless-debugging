@@ -8,17 +8,20 @@ set -euo pipefail
 
 OPERATION="${1:-}"
 TOKEN_FILE="$HOME/.config/wireless-debugging/token"
+DISCOVERY_PYTHON="$HOME/.venvs/adb-discovery/bin/python"
+CHECK_ONLY=0
 
 if (( $# != 1 )); then
-    echo "Usage: wireless-debugging {on|off|status|--version}" >&2
+    echo "Usage: wireless-debugging {on|off|status|check|--version}" >&2
     exit 1
 fi
 
 case "$OPERATION" in
     on|off|status) ;;
+    check) OPERATION="status"; CHECK_ONLY=1 ;;
     --version) OPERATION="version" ;;
     *)
-        echo "Usage: wireless-debugging {on|off|status|--version}" >&2
+        echo "Usage: wireless-debugging {on|off|status|check|--version}" >&2
         exit 1
         ;;
 esac
@@ -52,6 +55,17 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 1
 fi
 
+CHECK_TIMEOUT="${WIRELESS_DEBUGGING_CHECK_TIMEOUT:-30}"
+
+if [[ "$OPERATION" != "off" && "$OPERATION" != "version" ]]; then
+    if [[ ! "$CHECK_TIMEOUT" =~ ^[0-9]{1,3}$ ]] \
+        || (( 10#$CHECK_TIMEOUT < 1 || 10#$CHECK_TIMEOUT > 300 )); then
+        echo "Error: WIRELESS_DEBUGGING_CHECK_TIMEOUT must be an integer from 1 to 300." >&2
+        exit 1
+    fi
+    CHECK_TIMEOUT=$((10#$CHECK_TIMEOUT))
+fi
+
 NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 
 if [[ ! "$NONCE" =~ ^[0-9a-f]{32}$ ]]; then
@@ -59,6 +73,174 @@ if [[ ! "$NONCE" =~ ^[0-9a-f]{32}$ ]]; then
     exit 1
 fi
 
+# Discovery of local ADB connection ports. Only _adb-tls-connect._tcp.local.
+# services are browsed; only the advertised port is used (never the address),
+# and the pairing service is never queried.
+# Arguments: browse seconds, overall deadline seconds (sys.argv[1], [2]).
+DISCOVERY_CODE="$(cat <<'PY'
+import sys
+import threading
+import time
+
+from zeroconf import IPVersion, ServiceBrowser, ServiceListener, Zeroconf
+
+SERVICE_TYPE = "_adb-tls-connect._tcp.local."
+MAX_PORTS = 8
+
+browse = float(sys.argv[1])
+deadline = time.monotonic() + float(sys.argv[2])
+
+
+class Listener(ServiceListener):
+    def __init__(self):
+        self.names = set()
+        self.lock = threading.Lock()
+
+    def add_service(self, resolver, service_type, name):
+        with self.lock:
+            self.names.add(name)
+
+    def update_service(self, resolver, service_type, name):
+        self.add_service(resolver, service_type, name)
+
+    def remove_service(self, resolver, service_type, name):
+        with self.lock:
+            self.names.discard(name)
+
+
+listener = Listener()
+
+with Zeroconf(ip_version=IPVersion.V4Only) as resolver:
+    browser = ServiceBrowser(resolver, SERVICE_TYPE, listener)
+    try:
+        time.sleep(browse)
+
+        with listener.lock:
+            names = sorted(listener.names)
+
+        ports = set()
+        for name in names:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            info = resolver.get_service_info(
+                SERVICE_TYPE, name, timeout=int(min(2.0, left) * 1000)
+            )
+            if info is not None and 1024 <= info.port <= 65535:
+                ports.add(info.port)
+
+        for port in sorted(ports)[:MAX_PORTS]:
+            print(port)
+    finally:
+        browser.cancel()
+PY
+)"
+
+# Verifies a usable local ADB transport. Sets CHECK_TARGET on success and
+# CHECK_REASON otherwise. Never pairs, disconnects, kills the server or
+# connects to anything but 127.0.0.1. Bounded by CHECK_TIMEOUT seconds.
+adb_check() {
+    local DEADLINE=$(( SECONDS + CHECK_TIMEOUT ))
+    local MISSING="" PORTS PORT TARGET STATE STATUS LEFT BROWSE
+    local TRIED=0 TIMED_OUT=0 UNAUTHORIZED="" OFFLINE="" SEEN=" "
+    CHECK_TARGET=""
+    CHECK_REASON=""
+
+    command -v adb >/dev/null 2>&1 || MISSING="adb (pkg install android-tools)"
+    if [[ ! -x "$DISCOVERY_PYTHON" ]]; then
+        MISSING="${MISSING:+$MISSING, }python discovery environment ($DISCOVERY_PYTHON)"
+    elif ! timeout 10 "$DISCOVERY_PYTHON" -c 'import zeroconf' >/dev/null 2>&1; then
+        MISSING="${MISSING:+$MISSING, }zeroconf in the discovery environment"
+    fi
+    if [[ -n "$MISSING" ]]; then
+        CHECK_REASON="missing dependencies: $MISSING"
+        return 1
+    fi
+
+    left() {
+        LEFT=$(( DEADLINE - SECONDS ))
+        (( LEFT > 0 )) || LEFT=0
+    }
+
+    left
+    if (( LEFT < 1 )); then
+        CHECK_REASON="timed out"
+        return 1
+    fi
+    STATUS=0
+    timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb start-server >/dev/null 2>&1 || STATUS=$?
+    if (( STATUS != 0 )); then
+        CHECK_REASON="the adb client server could not be started in time"
+        return 1
+    fi
+
+    left
+    if (( LEFT < 1 )); then
+        CHECK_REASON="timed out before discovery"
+        return 1
+    fi
+    BROWSE=$(( LEFT / 2 ))
+    (( BROWSE >= 1 )) || BROWSE=1
+    (( BROWSE <= 8 )) || BROWSE=8
+    STATUS=0
+    PORTS="$(timeout "$LEFT" "$DISCOVERY_PYTHON" -c "$DISCOVERY_CODE" \
+        "$BROWSE" "$(( LEFT > 1 ? LEFT - 1 : 1 ))" 2>/dev/null)" || STATUS=$?
+    if (( STATUS == 124 )); then
+        CHECK_REASON="service discovery timed out"
+        return 1
+    elif (( STATUS != 0 )); then
+        CHECK_REASON="service discovery failed"
+        return 1
+    fi
+
+    while IFS= read -r PORT; do
+        [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || continue
+        PORT=$((10#$PORT))
+        (( PORT >= 1024 && PORT <= 65535 )) || continue
+        [[ "$SEEN" == *" $PORT "* ]] && continue
+        SEEN="$SEEN$PORT "
+        (( TRIED < 8 )) || break
+        TRIED=$(( TRIED + 1 ))
+        TARGET="127.0.0.1:$PORT"
+
+        left
+        if (( LEFT < 1 )); then
+            TIMED_OUT=1
+            break
+        fi
+        STATUS=0
+        timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb connect "$TARGET" >/dev/null 2>&1 || STATUS=$?
+        if (( STATUS == 124 )); then
+            TIMED_OUT=1
+            continue
+        fi
+
+        left
+        if (( LEFT < 1 )); then
+            TIMED_OUT=1
+            break
+        fi
+        STATE="$(timeout "$(( LEFT < 5 ? LEFT : 5 ))" adb -s "$TARGET" get-state 2>/dev/null)" || true
+        case "$STATE" in
+            device) CHECK_TARGET="$TARGET"; return 0 ;;
+            unauthorized) UNAUTHORIZED="$TARGET" ;;
+            offline) OFFLINE="$TARGET" ;;
+        esac
+    done <<< "$PORTS"
+
+    if [[ -n "$UNAUTHORIZED" ]]; then
+        CHECK_REASON="unauthorized on $UNAUTHORIZED; this client is not authorized, no pairing was attempted"
+    elif [[ -n "$OFFLINE" ]]; then
+        CHECK_REASON="offline on $OFFLINE"
+    elif (( TIMED_OUT )); then
+        CHECK_REASON="timed out before a local transport was verified"
+    elif (( TRIED == 0 )); then
+        CHECK_REASON="no local connect service found; this does not prove pairing was lost"
+    else
+        CHECK_REASON="no discovered local port gave a usable ADB device ($TRIED tried)"
+    fi
+    return 1
+}
 # An ordered broadcast returns its result code and data on stdout, unlike
 # "am start". The response is correlated with this request using NONCE.
 STATUS=0
@@ -162,9 +344,31 @@ if [[ "$OPERATION" != "status" ]]; then
     fi
 fi
 
-printf 'Operation: %s\n' "$OPERATION"
-printf 'Result: success\n'
+if (( CHECK_ONLY )); then
+    printf 'Operation: check\n'
+else
+    printf 'Operation: %s\n' "$OPERATION"
+    printf 'Result: success\n'
+fi
 printf 'adb_wifi_enabled setting (observed): %s\n' "$SETTING_TEXT"
 printf 'Required permission: %s\n' "$PERMISSION"
 printf 'App version: %s (code %s)\n' "$VERSION" "$VERSION_CODE"
-echo "Note: this is the requested system setting only; ADB reachability is not verified."
+
+if [[ "$OPERATION" == "off" ]]; then
+    echo "Note: ADB connectivity was not checked and no connection was attempted."
+    exit 0
+fi
+
+if adb_check; then
+    printf 'ADB check: available\n'
+    printf 'ADB target: %s\n' "$CHECK_TARGET"
+    exit 0
+fi
+
+printf 'ADB check: not verified (%s)\n' "$CHECK_REASON"
+echo "Note: the setting above and the ADB check are independent observations."
+if (( CHECK_ONLY )); then
+    echo "Error: could not verify a usable local ADB transport." >&2
+    exit 1
+fi
+exit 0
