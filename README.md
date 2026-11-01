@@ -44,10 +44,68 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 Required commands on PATH:
 
 ```text
-javac jar keytool aapt2 d8 zip zipalign apksigner
+java javac jar keytool aapt2 d8 zip zipalign apksigner
 ```
 
-Install Android-compatible versions in Termux. Desktop SDK binaries are not necessarily executable on Android. Dependencies are not installed automatically by this repository.
+### Install build tools in Termux
+
+Run these commands inside Termux, not in an ADB shell or a desktop Linux terminal:
+
+```sh
+pkg update &&
+pkg install git openjdk-21 aapt aapt2 d8 apksigner zip
+```
+
+Review the package manager's proposed changes before accepting. Use the repositories configured for your Termux distribution; do not mix repositories from different Termux distributions. Package availability may differ between distributions or change over time. If a package is unavailable, stop and inspect the configured repositories rather than substituting an arbitrary downloaded executable.
+
+| Package | Commands used by this project | Purpose |
+| --- | --- | --- |
+| `git` | `git` | Clone and update the repository |
+| `openjdk-21` | `java`, `javac`, `jar`, `keytool` | Run Java tools, compile sources and manage the signing key |
+| `aapt` | `zipalign` | Align the APK |
+| `aapt2` | `aapt2` | Package Android resources |
+| `d8` | `d8` | Convert compiled Java classes to DEX |
+| `apksigner` | `apksigner` | Sign and verify the APK |
+| `zip` | `zip` | Add DEX files to the APK |
+
+The Android tool package ownership above was checked in the development device's installed package database: `zipalign` belongs to `aapt`, not to a separate package named `zipalign`. OpenJDK 21 is the installation option documented here; the original device's Java package/version was not established by that check. A missing package owner for a command path does not by itself prove a manual installation, because the path may be a symlink.
+
+Use Termux-native tools for the device architecture. Desktop SDK binaries are not necessarily executable on Android. This project does not need Gradle, Android Studio, a Linux distribution in proot, or root for this build pipeline. The build script does not install dependencies automatically.
+
+These packages do not provision the API 33 platform JAR at the project-specific path below. That is a separate requirement. The reboot example's `android-tools`, Python and `zeroconf` dependencies are also separate from compilation tools.
+
+Official package definitions: [aapt](https://github.com/termux/termux-packages/tree/master/packages/aapt), [aapt2](https://github.com/termux/termux-packages/blob/master/packages/aapt/aapt2.subpackage.sh), [d8](https://github.com/termux/termux-packages/tree/master/packages/d8), and [apksigner](https://github.com/termux/termux-packages/tree/master/packages/apksigner).
+
+### Check all required commands
+
+Run in Bash. The subshell reports every missing command and returns a nonzero status without closing your interactive shell:
+
+```bash
+(
+    missing=0
+    for tool in java javac jar keytool aapt2 d8 zip zipalign apksigner; do
+        if path="$(command -v "$tool")"; then
+            printf 'Found: %s -> %s\n' "$tool" "$path"
+        else
+            printf 'Missing: %s\n' "$tool" >&2
+            missing=1
+        fi
+    done
+    exit "$missing"
+)
+```
+
+This checks command availability, not full tool compatibility. To inspect the Java toolchain and record useful diagnostics:
+
+```sh
+java -version
+javac -version
+d8 --version
+aapt2 version
+apksigner version
+```
+
+### Android API 33 platform JAR
 
 The build expects the API 33 platform JAR at:
 
@@ -55,14 +113,23 @@ The build expects the API 33 platform JAR at:
 $HOME/.local/share/android-sdk/platforms/android-33/android.jar
 ```
 
-Provision this file or edit `PLATFORM` in `build.sh` to point to an API 33 platform JAR. Check the environment:
+Provision this file from an Android SDK API 33 platform installation, or edit `PLATFORM` in `build.sh` to point to your API 33 platform JAR. Do not replace it with an arbitrary JAR or a framework APK from the phone. A full platform-download procedure is not yet documented here.
 
-```sh
-for tool in javac jar keytool aapt2 d8 zip zipalign apksigner; do
-    command -v "$tool" || break
-done
-test -f "$HOME/.local/share/android-sdk/platforms/android-33/android.jar"
+Check the file and its archive structure:
+
+```bash
+(
+    platform="$HOME/.local/share/android-sdk/platforms/android-33/android.jar"
+    if [[ ! -s "$platform" ]]; then
+        printf 'Error: API 33 platform JAR is missing or empty: %s\n' "$platform" >&2
+        exit 1
+    fi
+    jar --list --file "$platform" >/dev/null || exit 1
+    printf 'Platform JAR found: %s\n' "$platform"
+)
 ```
+
+Archive validity alone does not establish the API level or authenticity; use a trusted Android SDK source. After all checks pass, run the build below. The complete build and signature verification remain the practical compatibility test.
 
 ## Build and install the app
 
