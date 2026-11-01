@@ -1,6 +1,15 @@
 # Wireless Debugging
 
+**Local ADB-powered commands from Termux, without root.**
+
 Minimal Android companion app to control the wireless debugging system setting from Termux without root. Built directly on Android using command-line tools, without Gradle.
+
+The Android companion controls Wireless Debugging, and the Termux scripts activate it, discover and verify a local ADB target on the phone itself. That makes convenient Termux commands such as `reboot` and `poweroff` possible from the phone, Samsung DeX, or an SSH session into the phone. These commands run through the phone's own authorized ADB connection, so they remain subject to the ADB shell's normal permissions. The project does not grant root and does not bypass those limits.
+
+## Use cases
+
+- Restart or shut down the phone from a Termux prompt, in DeX, or over SSH, using the installed `reboot` and `poweroff` commands. See [Example: reboot this phone over wireless ADB](#example-reboot-this-phone-over-wireless-adb) and [Example: shut down this phone over wireless ADB](#example-shut-down-this-phone-over-wireless-adb).
+- Build your own local ADB-powered Termux commands on the same wrapper and verified-target helper. Setup is described in the sections below and is not repeated here.
 
 ## Requirements and limitations
 
@@ -440,7 +449,23 @@ Run this in Termux on the phone, whether locally, in Samsung DeX, or in a Termux
 
 The script requests wireless debugging activation, then requires a verified loopback target and runs only `adb -s "$TARGET" shell svc power shutdown`. If discovery is unavailable, it offers interactive pairing and requires explicit consent; it rediscovers and verifies the connection port after pairing. It never uses an implicit/default ADB target, root, or another device as a fallback. Discovery and pairing failures, or declining pairing, issue no shutdown command.
 
-**This is destructive and has no final shutdown confirmation prompt.** Save your work and expect the device to turn off as soon as the command succeeds. Shutdown disconnects SSH and DeX; it cannot be undone through that same SSH connection. A transport disconnect alone does not prove that shutdown succeeded. Actual shutdown on the reported Samsung device has not been tested; host checks use mocked ADB and never shut down a device.
+**This is destructive and has no final shutdown confirmation prompt.** Save your work and expect the device to turn off as soon as the command succeeds. Shutdown disconnects SSH and DeX; it cannot be undone through that same SSH connection. A transport disconnect alone does not prove that shutdown succeeded. Host checks use mocked ADB and never shut down a device.
+
+### User-reported manual validation
+
+These results were reported manually by the repository owner; they were not run by the automated checks or by the agent that wrote this documentation. Device: Samsung Galaxy S20 FE SM-G780G, Android 13 / One UI 5.1.
+
+- First installation and repeated `make install` succeeded in Termux.
+- `poweroff` shut the phone down.
+- Holding the power button for about five seconds started the phone again.
+- SSH became reachable after startup. Automated SSH startup was not independently established.
+
+Always keep a way to turn the phone back on: after `poweroff` it cannot be started through the SSH session that issued the command. These results are for this one device and setup and are not a compatibility guarantee.
+
+### Observed device/setup-specific issues
+
+- **DeX:** after this shutdown/startup test, reconnecting HDMI restored DeX. The cause and a software recovery are still under investigation.
+- **Wake-on-LAN:** a WoL packet sent from Manjaro did not start the phone in the owner's test, even though the USB Ethernet adapter remained powered. This is a single observation, not a statement that WoL is impossible or supported on other devices or setups.
 
 ## APK versions and releases
 
