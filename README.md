@@ -334,9 +334,9 @@ ADB check: available
 ADB target: 127.0.0.1:41234
 ```
 
-Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operation or query succeeds. For `on` and `status`, an unverified ADB check is reported on standard output and does not change the successful exit status. All commands exit 1 on usage errors, invalid timeouts, token/app/protocol errors, timeouts or no response; messages go to standard error.
+Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operation or query succeeds. For `on` and `status`, an unverified ADB check, including an ADB verification timeout, is reported on standard output and does not change the successful exit status. All commands exit 1 on usage errors, invalid timeout values, token/app/protocol errors, an app request timeout or no response; messages go to standard error.
 
-On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
+On app failure (rejected token, missing WRITE_SECURE_SETTINGS, app-request timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
 **Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall the script with the `install -m 700` command above. Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
