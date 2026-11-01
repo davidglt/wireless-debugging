@@ -1,0 +1,45 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+OPERATION="${1:-}"
+TOKEN_FILE="$HOME/.config/wireless-debugging/token"
+
+if (( $# != 1 )); then
+    echo "Usage: wireless-debugging {on|off|status}" >&2
+    exit 1
+fi
+
+case "$OPERATION" in
+    on|off|status) ;;
+    *)
+        echo "Usage: wireless-debugging {on|off|status}" >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -r "$TOKEN_FILE" ]]; then
+    echo "Error: control token file is missing or unreadable." >&2
+    exit 1
+fi
+
+IFS= read -r TOKEN < "$TOKEN_FILE"
+
+if [[ ! "$TOKEN" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Error: invalid control token format." >&2
+    exit 1
+fi
+
+if ! command -v am >/dev/null 2>&1; then
+    echo "Error: Android activity launcher 'am' was not found." >&2
+    exit 1
+fi
+
+am start --user 0 \
+    -n local.termux.wirelessdebugging/.MainActivity \
+    -a local.termux.wirelessdebugging.CONTROL \
+    --es operation "$OPERATION" \
+    --es token "$TOKEN"
+
+unset TOKEN
+
+printf 'Request sent: %s\n' "$OPERATION"
