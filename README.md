@@ -11,6 +11,25 @@ Minimal Android companion app to control the wireless debugging system setting f
 
 The app writes `Settings.Global.adb_wifi_enabled`. An ON setting does not guarantee ADB reachability: Android may still require network approval and pairing. The companion app itself does not pair devices or discover ports. Device behavior can vary.
 
+## Development and observed test environment
+
+| Component | Reported value |
+| --- | --- |
+| Device | Samsung Galaxy S20 FE |
+| Manufacturer | samsung |
+| Model reported by Android | SM-G780G |
+| Android | 13 |
+| Device API level | 33 |
+| One UI | 5.1 |
+| Android security patch | 2025-10-01 |
+| Build identifier | TP1A.220624.014.G780GXXSHEYJ1 |
+| Desktop environment | Samsung DeX; version not recorded |
+| Termux distribution | Google Play; app version not recorded |
+
+Development used Samsung DeX with an external monitor and a UGREEN USB-C hub. DeX is the desktop environment, not the DEX bytecode produced by the Android build tool `d8`. Exact build-tool versions were not recorded.
+
+On this device, the app buttons and Termux control worked after enabling Termux's display-over-other-apps access. A launcher exception was also observed as described below. The reboot example's newly added activation integration still needs end-to-end device testing; these observations are not a compatibility guarantee for other devices.
+
 ## Repository layout
 
 - `AndroidManifest.xml`: package, permission and activity declaration.
@@ -65,6 +84,78 @@ $HOME/.local/share/wireless-debugging/signing/store-password
 
 Keep both files private, back them up securely and reuse the same key for updates. Do not commit them.
 
+## Initial wireless ADB pairing from Termux
+
+Install the ADB client:
+
+```sh
+pkg install android-tools
+```
+
+On the phone:
+
+1. Enable Developer options if necessary.
+2. Open `Settings > Developer options > Wireless debugging` and turn it on manually for the initial setup.
+3. Approve the current Wi-Fi network only if you trust it. If offered, `Always allow on this network` remembers network approval; it does not guarantee that debugging remains enabled forever.
+4. Select `Pair device with pairing code`. Keep that dialog open. Use split-screen or separate DeX windows to keep Settings and Termux accessible.
+5. Note the pairing port and enter it at the prompt below. Enter the displayed pairing code only when ADB asks for it.
+
+```bash
+read -r -p 'Pairing port: ' PAIR_PORT
+adb pair "127.0.0.1:$PAIR_PORT"
+unset PAIR_PORT
+```
+
+The loopback address is for the local-phone workflow used by this project. If the device does not accept loopback connections, use the IP address shown in Settings instead; the supplied reboot example specifically assumes loopback support. A computer-based setup should use the phone's displayed IP address on the same network, not the computer's loopback address.
+
+After pairing, return to the main Wireless debugging screen. Its connection port is different from the pairing port. For a manual connection, enter the connection port shown on that main screen:
+
+```bash
+read -r -p 'Connection port: ' CONNECT_PORT
+adb connect "127.0.0.1:$CONNECT_PORT"
+adb -s "127.0.0.1:$CONNECT_PORT" get-state
+```
+
+Proceed only if the state is `device`. To grant the installed companion app its permission using this specific connection:
+
+```bash
+adb -s "127.0.0.1:$CONNECT_PORT" shell pm grant \
+    local.termux.wirelessdebugging android.permission.WRITE_SECURE_SETTINGS
+unset CONNECT_PORT
+```
+
+Do not save pairing codes or hard-code ports. Connection ports may change when debugging restarts. The reboot example rediscovers the connection port instead.
+
+## Preserve pairing between sessions
+
+Pairing, connection and the debugging switch are separate:
+
+- Pairing authorizes the ADB client's identity and normally survives closing Termux or restarting its ADB server.
+- A connection is a current session and may need reconnecting to a new port.
+- Wireless debugging must be enabled for a connection to work. This app can request that setting after its one-time permission grant; it does not preserve authorization by itself.
+
+To retain the client identity:
+
+1. Keep Termux's existing ADB key files, normally `$HOME/.android/adbkey` and `$HOME/.android/adbkey.pub`. The first is a private credential. Do not delete or regenerate them unnecessarily.
+2. Do not clear Termux's app data or uninstall it without securely backing up any keys you need. A new client key requires new authorization.
+3. Do not choose `Forget` for that client in Android's paired-device list or revoke ADB debugging authorizations unless you intend to remove access.
+4. Keep using the same Termux environment for this workflow. Pairing a computer authorizes that computer's identity, not automatically Termux's identity.
+5. If you back up ADB keys, protect the backup as a credential. Never commit keys, paste their contents into issues, or place them in public/shared folders.
+
+### Optional: disable authorization expiration
+
+If Developer options exposes `Disable adb authorization timeout`, enabling it disables automatic authorization revocation due to the ADB authorization timeout. This retains trust in authorized clients for longer and is a security tradeoff, not a requirement for running the app. Availability and wording vary; this option has not yet been confirmed on the reported Samsung configuration.
+
+This option does not keep a network connection alive, freeze the port, prevent explicit revocation, or guarantee that wireless debugging stays enabled after reboot or inactivity. Prefer normal expiration unless you need longer-lived authorization and understand the risk. This project does not change the timeout automatically.
+
+### Reconnect without pairing again
+
+Enable wireless debugging, discover the current connection port and reconnect using the same client identity. If the connection is unavailable, first check the switch, network approval and current port; do not assume pairing has been lost. Pair again only if authorization is missing or rejected.
+
+For the integration example, `wireless-reboot` performs discovery and connection, but it will actually reboot the phone as soon as it connects. Do not use it merely as a harmless connection test. Use the manual `get-state` command above for a non-rebooting check.
+
+Official background: [Android Debug Bridge wireless pairing](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi) and [Android authorization-timeout implementation](https://android.googlesource.com/platform/packages/apps/Settings/+/master/src/com/android/settings/development/AdbAuthorizationTimeoutPreferenceController.java). Newer Android features described in upstream documentation are not necessarily available on Android 13.
+
 ## Grant the app permission once
 
 Using an authorized ADB shell connection, run:
@@ -73,7 +164,7 @@ Using an authorized ADB shell connection, run:
 adb shell pm grant local.termux.wirelessdebugging android.permission.WRITE_SECURE_SETTINGS
 ```
 
-Use USB ADB from a computer or an already paired wireless ADB connection. Establish the initial connection before disabling wireless debugging. An ordinary Android permission dialog cannot grant this permission.
+Use USB ADB from a computer or an already paired wireless ADB connection. Establish the initial connection before disabling wireless debugging. An ordinary Android permission dialog cannot grant this permission. If several devices are connected, specify the intended device with `adb -s TARGET`, as in the local pairing example above.
 
 Open the app from its launcher icon to create its token. Press `Refresh status` and verify `Required permission: GRANTED`. The buttons are `Turn ON`, `Turn OFF` and `Refresh status`.
 
@@ -126,7 +217,7 @@ Create the private token file using Bash. Copy the current 64-character token di
 )
 ```
 
-This replaces any existing token file. Never commit it. Reconfigure it if the app's token changes.
+This replaces any existing token file. Never commit it. Reconfigure it if the app's token changes. The app control token is separate from ADB keys and pairing codes.
 
 Usage:
 
