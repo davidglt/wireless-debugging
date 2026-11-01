@@ -41,6 +41,7 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 - `scripts/adb-local-check`: shared bounded local ADB discovery and verification helper.
 - `scripts/install-scripts.sh` and `Makefile`: `make install` copies the user-facing scripts to `$HOME/bin`.
 - `examples/reboot.sh`: local wireless ADB reboot integration example.
+- `examples/poweroff.sh`: local wireless ADB shutdown integration example, installed as `$HOME/bin/poweroff`.
 - `build/` and `dist/`: generated files, excluded from source control.
 
 ## Build environment
@@ -77,7 +78,7 @@ The Android tool package ownership above was checked in the development device's
 
 Use Termux-native tools for the device architecture. Desktop SDK binaries are not necessarily executable on Android. This project does not need Gradle, Android Studio, a Linux distribution in proot, or root for this build pipeline. The build script does not install dependencies automatically.
 
-These packages do not provision the API 33 platform JAR at the project-specific path below. That is a separate requirement. The reboot example's `android-tools`, Python and `zeroconf` dependencies are also separate from compilation tools.
+These packages do not provision the API 33 platform JAR at the project-specific path below. That is a separate requirement. The examples' `android-tools`, Python and `zeroconf` dependencies are also separate from compilation tools.
 
 Official package definitions: [aapt](https://github.com/termux/termux-packages/tree/master/packages/aapt), [aapt2](https://github.com/termux/termux-packages/blob/master/packages/aapt/aapt2.subpackage.sh), [d8](https://github.com/termux/termux-packages/tree/master/packages/d8), and [apksigner](https://github.com/termux/termux-packages/tree/master/packages/apksigner).
 
@@ -191,7 +192,7 @@ adb pair "127.0.0.1:$PAIR_PORT"
 unset PAIR_PORT
 ```
 
-The loopback address is for the local-phone workflow used by this project. If the device does not accept loopback connections, use the IP address shown in Settings instead; the supplied reboot example specifically assumes loopback support. A computer-based setup should use the phone's displayed IP address on the same network, not the computer's loopback address.
+The loopback address is for the local-phone workflow used by this project. If the device does not accept loopback connections, use the IP address shown in Settings for manual setup instead; the supplied reboot and poweroff examples specifically require loopback support. A computer-based setup should use the phone's displayed IP address on the same network, not the computer's loopback address.
 
 After pairing, return to the main Wireless debugging screen. Its connection port is different from the pairing port. For a manual connection, enter the connection port shown on that main screen:
 
@@ -289,9 +290,9 @@ From the repository root, install or update the scripts in `$HOME/bin`:
 make install
 ```
 
-This copies `scripts/wireless-debugging`, `scripts/adb-local-check` and `examples/reboot.sh` (installed as `reboot`) to `$HOME/bin` with owner-only executable permissions (`700`). Without `make`, run `bash scripts/install-scripts.sh` instead. All sources are validated and staged before any destination file is replaced, so a missing source fails with an error and leaves existing commands unchanged. Rerun the same command after pulling a new version to update the scripts; this replaces existing commands at those paths, so back up customized versions first. To use another destination (for example for host tests), set `BINDIR`: `make install BINDIR=/path/to/dir`.
+This copies `scripts/wireless-debugging`, `scripts/adb-local-check`, `examples/reboot.sh` (installed as `reboot`) and `examples/poweroff.sh` (installed as `poweroff`) to `$HOME/bin` with owner-only executable permissions (`700`). Without `make`, run `bash scripts/install-scripts.sh` instead. All sources are validated and staged before any destination file is replaced, so a missing source fails with an error and leaves existing commands unchanged. Rerun the same command after pulling a new version to update the scripts; this replaces existing commands at those paths, so back up customized versions first. To use another destination (for example for host tests), set `BINDIR`: `make install BINDIR=/path/to/dir`.
 
-Script installation never runs the scripts (including `reboot`), connects to ADB, installs or updates the APK, creates or changes tokens or keys, changes Android permissions or installs dependencies. APK installation is a separate step, described in [Build and install the app](#build-and-install-the-app), using `adb -s TARGET install -r dist/wireless-debugging.apk` with a verified `TARGET`.
+Script installation never runs the scripts (including `reboot` or `poweroff`), connects to ADB, installs or updates the APK, creates or changes tokens or keys, changes Android permissions or installs dependencies. APK installation is a separate step, described in [Build and install the app](#build-and-install-the-app), using `adb -s TARGET install -r dist/wireless-debugging.apk` with a verified `TARGET`.
 
 `$HOME/bin` must be on your `PATH`. If it is not, add it (for example to `~/.bashrc`) and reload the shell:
 
@@ -349,8 +350,8 @@ Behavior:
 
 - `on` requests activation and `status` queries the app's setting, permission and installed version. Both perform a bounded ADB check after a successful app response. `off` changes the setting and never checks or connects. `--version` only asks the app for its version; it never uses `adb`, Python or discovery.
 - The app operation result, observed `adb_wifi_enabled` setting and ADB connectivity verification are reported separately. `ADB check: available` is printed only when a specific discovered local target reports `device`; otherwise the output says `ADB check: not verified` with the observed reason. An unverified ADB check does not turn a successful `on`/`status` app operation into a failure.
-- The installed `adb-local-check` helper is shared by the wrapper and reboot example. Its one global deadline covers dependency imports, `adb start-server`, discovery, local connects and each `get-state`. Discovery browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates connection ports (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. Availability requires `adb -s 127.0.0.1:PORT get-state` to return `device`. Other USB/remote transports already known to adb do not count.
-- It does not pair, reboot, run `adb kill-server`, disconnect other devices, touch ADB keys, change security settings, download or install anything. The adb client server may be started if needed.
+- The installed `adb-local-check` helper is shared by the wrapper and both examples. Its one global deadline covers dependency imports, `adb start-server`, discovery, local connects and each `get-state`. Discovery browses only `_adb-tls-connect._tcp.local.` (IPv4) with the Python `zeroconf` in `$HOME/.venvs/adb-discovery`, validates connection ports (1024-65535, at most 8 tried; 5555 is not assumed), and tries them only on `127.0.0.1`. It never connects to advertised remote addresses and never uses the pairing service or port. Availability requires `adb -s 127.0.0.1:PORT get-state` to return `device`. Other USB/remote transports already known to adb do not count.
+- It does not pair, reboot, shut down the device, run `adb kill-server`, disconnect other devices, touch ADB keys, change security settings, download or install anything. The adb client server may be started if needed.
 - Results: `available`; `not verified` with the observed reason (missing dependencies, discovery failure, timeout, `unauthorized`, `offline`, or no usable local port). No discovered service is not proof that pairing was lost.
 - `WIRELESS_DEBUGGING_TIMEOUT` (default 15) and `WIRELESS_DEBUGGING_CHECK_TIMEOUT` (default 30) each accept only 1-300 decimal seconds, with at most three digits; leading zeroes are accepted and normalized as decimal. Zero, empty, non-decimal, overlong and out-of-range values are rejected. The ADB check timeout is one global deadline including dependency imports, server startup, discovery, connect and `get-state`; the app timeout bounds only the app request.
 
@@ -388,7 +389,7 @@ Host checks (bash, JDK; python3 optional; no Android needed). They use fake `am`
 bash tests/run-tests.sh
 ```
 
-Source-text UI checks are structural assertions only, not functional Android tests. The Java protocol tests and wrapper integration checks use fake tools; concurrent-request checks cover nonce correlation in host test doubles only, not Android broadcast scheduling or real concurrent device operations. Fake build-tool checks exercise stale-artifact cleanup, signing-state safety and atomic publication, not Android compilation or a valid installable APK. `tests/install-test.sh` (run by `tests/run-tests.sh`) checks script installation into a temporary `BINDIR`: first install, update, executable permissions, paths with spaces and missing-source failure without partial updates. The suite does **not** compile Android activities/receiver, exercise real Termux `am`, install or run the APK on a device, test inactivity/authorization behavior, or execute the reboot example. Those require a real Android/Termux device and the build tools.
+Source-text UI checks are structural assertions only, not functional Android tests. The Java protocol tests and wrapper integration checks use fake tools; concurrent-request checks cover nonce correlation in host test doubles only, not Android broadcast scheduling or real concurrent device operations. Fake build-tool checks exercise stale-artifact cleanup, signing-state safety and atomic publication, not Android compilation or a valid installable APK. `tests/install-test.sh` (run by `tests/run-tests.sh`) checks script installation into a temporary `BINDIR`: first install, update, executable permissions, paths with spaces and missing-source failure without partial updates. The poweroff host test uses mocked commands only and never performs a real shutdown. The suite does **not** compile Android activities/receiver, exercise real Termux `am`, install or run the APK on a device, test inactivity/authorization behavior, or execute either example against a real device. Those require a real Android/Termux device and the build tools.
 
 ## Example: reboot this phone over wireless ADB
 
@@ -426,6 +427,20 @@ The example:
 6. Repeats bounded discovery after pairing, then runs `adb -s TARGET reboot`.
 
 Discovery can fail if the network does not expose mDNS or the device does not accept local connections. Pairing and connection ports are distinct; the script rediscovers the connection port. It does not disable wireless debugging before reboot, because that would interrupt the required connection, and does not guarantee its state after reboot. If discovery is cancelled or connection fails, no reboot command is issued. The example's pairing/reboot behavior and on-device integration have not been executed or verified as part of host checks.
+
+## Example: shut down this phone over wireless ADB
+
+`examples/poweroff.sh` is a Termux example installed as `$HOME/bin/poweroff` by `make install` (see [Install the Termux command](#install-the-termux-command)). It uses the same prerequisites and setup as the reboot example: `android-tools` (`adb`), `coreutils` (`timeout`), the installed `wireless-debugging` wrapper and `adb-local-check` helper, and Python with `zeroconf` in `$HOME/.venvs/adb-discovery`. The companion app permission, Termux special access and private token must be configured first.
+
+Run this in Termux on the phone, whether locally, in Samsung DeX, or in a Termux SSH session:
+
+```sh
+"$HOME/bin/poweroff"
+```
+
+The script requests wireless debugging activation, then requires a verified loopback target and runs only `adb -s "$TARGET" shell svc power shutdown`. If discovery is unavailable, it offers interactive pairing and requires explicit consent; it rediscovers and verifies the connection port after pairing. It never uses an implicit/default ADB target, root, or another device as a fallback. Discovery and pairing failures, or declining pairing, issue no shutdown command.
+
+**This is destructive and has no final shutdown confirmation prompt.** Save your work and expect the device to turn off as soon as the command succeeds. Shutdown disconnects SSH and DeX; it cannot be undone through that same SSH connection. A transport disconnect alone does not prove that shutdown succeeded. Actual shutdown on the reported Samsung device has not been tested; host checks use mocked ADB and never shut down a device.
 
 ## APK versions and releases
 

@@ -26,10 +26,12 @@ jobs:
       - name: Bash syntax and static checks
         run: |
           bash -n build.sh scripts/wireless-debugging scripts/adb-local-check \
-            examples/reboot.sh scripts/install-scripts.sh tests/run-tests.sh \
-            tests/build-test.sh tests/install-test.sh
+            examples/reboot.sh examples/poweroff.sh scripts/install-scripts.sh \
+            tests/run-tests.sh tests/build-test.sh tests/install-test.sh \
+            tests/poweroff-test.sh
           shellcheck -S warning build.sh scripts/wireless-debugging \
-            scripts/adb-local-check examples/reboot.sh scripts/install-scripts.sh \
-            tests/run-tests.sh tests/build-test.sh tests/install-test.sh
+            scripts/adb-local-check examples/reboot.sh examples/poweroff.sh \
+            scripts/install-scripts.sh tests/run-tests.sh tests/build-test.sh \
+            tests/install-test.sh tests/poweroff-test.sh
       - name: Host tests
         run: bash tests/run-tests.sh

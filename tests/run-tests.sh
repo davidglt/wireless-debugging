@@ -384,12 +384,18 @@ doc_check() { # description, condition result
 }
 README="$ROOT/README.md"
 SETUP="$PKG/SetupActivity.java"
-doc_check 'README installs wrapper to $HOME/bin' \
-    grep -Fq 'install -m 700 scripts/wireless-debugging "$HOME/bin/wireless-debugging"' "$README"
-doc_check 'README installs the shared helper to $HOME/bin' \
-    grep -Fq 'install -m 700 scripts/adb-local-check "$HOME/bin/adb-local-check"' "$README"
+doc_check 'README documents make install for user-facing scripts' \
+    grep -Fq 'make install' "$README"
+doc_check 'README documents the installer alternative' \
+    grep -Fq 'bash scripts/install-scripts.sh' "$README"
 doc_check 'README installs example as $HOME/bin/reboot' \
     grep -Fq 'install -m 700 examples/reboot.sh "$HOME/bin/reboot"' "$README"
+doc_check 'README documents installed poweroff command' \
+    grep -Fq 'installed as `$HOME/bin/poweroff` by `make install`' "$README"
+doc_check 'README explains shutdown disconnects the session' \
+    grep -Fq 'disconnects SSH and DeX' "$README"
+doc_check 'README discloses Samsung shutdown testing limitation' \
+    grep -Fq 'Actual shutdown on the reported Samsung device has not been tested' "$README"
 doc_check 'README suggests type -a for migration' grep -Fq 'type -a reboot' "$README"
 doc_check 'README keeps reboot warning' grep -Fq 'actually reboot the phone' "$README"
 doc_check 'README install/PATH lines avoid obsolete paths' \
@@ -413,6 +419,9 @@ if ! bash "$ROOT/tests/build-test.sh"; then
     FAILED=1
 fi
 if ! bash "$ROOT/tests/install-test.sh"; then
+    FAILED=1
+fi
+if ! bash "$ROOT/tests/poweroff-test.sh"; then
     FAILED=1
 fi
 exit "$FAILED"
