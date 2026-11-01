@@ -1,0 +1,34 @@
+name: Host checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install ShellCheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+      - name: Bash syntax and static checks
+        run: |
+          bash -n build.sh scripts/wireless-debugging scripts/adb-local-check \
+            examples/reboot.sh tests/run-tests.sh tests/build-test.sh
+          shellcheck -S warning build.sh scripts/wireless-debugging \
+            scripts/adb-local-check examples/reboot.sh tests/run-tests.sh \
+            tests/build-test.sh
+      - name: Host tests
+        run: bash tests/run-tests.sh

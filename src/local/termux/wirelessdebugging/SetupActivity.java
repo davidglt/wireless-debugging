@@ -52,7 +52,7 @@ public final class SetupActivity extends Activity {
         AppSupport.addText(this, layout,
                 "\n2. Configure the Termux command:\n"
                 + "Install scripts/wireless-debugging from the project into "
-                + "$HOME/bin, then save the control token below to "
+                + "$HOME/bin together with scripts/adb-local-check, then save the control token below to "
                 + "~/.config/wireless-debugging/token (mode 600) using the "
                 + "README instructions. Termux also needs the Display over "
                 + "other apps special access.\n\n"
@@ -68,7 +68,8 @@ public final class SetupActivity extends Activity {
                 + "this app. Do not publish it or commit it to Git.\n\n"
                 + "Enabling the setting does not guarantee that ADB is "
                 + "reachable, and it does not bypass Android network "
-                + "approval.\n", false);
+                + "approval. The setting status does not verify ADB "
+                + "connectivity.\n", false);
 
         AppSupport.addButton(this, layout, "Close", this::finish);
 

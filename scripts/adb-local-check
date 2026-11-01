@@ -1,0 +1,253 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Copyright (C) 2026 David González López-Tercero
+# Author: David González López-Tercero
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSE and NOTICE in the repository root for licensing details.
+
+set -euo pipefail
+
+PYTHON="$HOME/.venvs/adb-discovery/bin/python"
+TIMEOUT_SECONDS="${1:-}"
+
+emit_result() {
+    local STATE="$1" TARGET="$2" REASON="$3" DETAIL="$4"
+    DETAIL="${DETAIL//$'\n'/ }"
+    DETAIL="${DETAIL//$'\r'/ }"
+    DETAIL="${DETAIL//$'\t'/ }"
+    DETAIL="${DETAIL//|//}"
+    printf 'adb-check-v1|%s|%s|%s|%s\n' \
+        "$STATE" "$TARGET" "$REASON" "$DETAIL"
+}
+
+if (( $# != 1 )) || [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]{1,3}$ ]]; then
+    emit_result unavailable "" invalid_timeout \
+        "timeout must be a decimal integer from 1 to 300 seconds"
+    exit 0
+fi
+
+TIMEOUT_SECONDS=$((10#$TIMEOUT_SECONDS))
+if (( TIMEOUT_SECONDS < 1 || TIMEOUT_SECONDS > 300 )); then
+    emit_result unavailable "" invalid_timeout \
+        "timeout must be a decimal integer from 1 to 300 seconds"
+    exit 0
+fi
+
+DEADLINE=$((SECONDS + TIMEOUT_SECONDS))
+left_seconds() {
+    LEFT=$((DEADLINE - SECONDS))
+    (( LEFT > 0 )) || LEFT=0
+}
+
+if ! command -v timeout >/dev/null 2>&1; then
+    emit_result unavailable "" missing_dependency "timeout"
+    exit 0
+fi
+if ! command -v adb >/dev/null 2>&1; then
+    emit_result unavailable "" missing_dependency "adb"
+    exit 0
+fi
+if [[ ! -x "$PYTHON" ]]; then
+    emit_result unavailable "" missing_dependency "Python discovery environment"
+    exit 0
+fi
+
+left_seconds
+if (( LEFT < 1 )); then
+    emit_result unavailable "" timeout "deadline expired during dependency checks"
+    exit 0
+fi
+
+STATUS=0
+timeout --signal=TERM --kill-after=1 "$LEFT" "$PYTHON" -c '
+import sys
+try:
+    import zeroconf
+except ModuleNotFoundError as error:
+    sys.exit(10 if error.name == "zeroconf" else 11)
+except Exception:
+    sys.exit(11)
+' >/dev/null 2>&1 || STATUS=$?
+case "$STATUS" in
+    0) ;;
+    10)
+        emit_result unavailable "" missing_dependency "zeroconf"
+        exit 0
+        ;;
+    124|137)
+        emit_result unavailable "" timeout "zeroconf import timed out"
+        exit 0
+        ;;
+    *)
+        emit_result unavailable "" probe_failed \
+            "zeroconf import failed (exit $STATUS)"
+        exit 0
+        ;;
+esac
+
+left_seconds
+if (( LEFT < 1 )); then
+    emit_result unavailable "" timeout "deadline expired before adb start-server"
+    exit 0
+fi
+STATUS=0
+timeout --signal=TERM --kill-after=1 "$LEFT" adb start-server >/dev/null 2>&1 || STATUS=$?
+if (( STATUS == 124 || STATUS == 137 )); then
+    emit_result unavailable "" timeout "adb start-server timed out"
+    exit 0
+elif (( STATUS != 0 )); then
+    emit_result unavailable "" probe_failed \
+        "adb start-server failed (exit $STATUS)"
+    exit 0
+fi
+
+left_seconds
+if (( LEFT < 1 )); then
+    emit_result unavailable "" timeout "deadline expired before service discovery"
+    exit 0
+fi
+BROWSE=$((LEFT / 2))
+(( BROWSE >= 1 )) || BROWSE=1
+(( BROWSE <= 8 )) || BROWSE=8
+DISCOVERY_CODE='
+import sys
+import threading
+import time
+from zeroconf import IPVersion, ServiceBrowser, ServiceListener, Zeroconf
+
+SERVICE_TYPE = "_adb-tls-connect._tcp.local."
+MAX_PORTS = 8
+browse = float(sys.argv[1])
+deadline = time.monotonic() + float(sys.argv[2])
+
+class Listener(ServiceListener):
+    def __init__(self):
+        self.names = set()
+        self.lock = threading.Lock()
+    def add_service(self, resolver, service_type, name):
+        with self.lock:
+            self.names.add(name)
+    def update_service(self, resolver, service_type, name):
+        self.add_service(resolver, service_type, name)
+    def remove_service(self, resolver, service_type, name):
+        with self.lock:
+            self.names.discard(name)
+
+listener = Listener()
+with Zeroconf(ip_version=IPVersion.V4Only) as resolver:
+    browser = ServiceBrowser(resolver, SERVICE_TYPE, listener)
+    try:
+        time.sleep(browse)
+        with listener.lock:
+            names = sorted(listener.names)
+        ports = set()
+        for name in names:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            info = resolver.get_service_info(
+                SERVICE_TYPE, name, timeout=max(1, int(min(2.0, left) * 1000))
+            )
+            if info is not None and 1024 <= info.port <= 65535:
+                ports.add(info.port)
+        for port in sorted(ports)[:MAX_PORTS]:
+            print(port)
+    finally:
+        browser.cancel()
+'
+STATUS=0
+PORTS="$(timeout --signal=TERM --kill-after=1 "$LEFT" "$PYTHON" -c "$DISCOVERY_CODE" \
+    "$BROWSE" "$((LEFT > 1 ? LEFT - 1 : 1))" 2>/dev/null)" || STATUS=$?
+if (( STATUS == 124 || STATUS == 137 )); then
+    emit_result unavailable "" timeout "service discovery timed out"
+    exit 0
+elif (( STATUS != 0 )); then
+    emit_result unavailable "" probe_failed \
+        "service discovery failed (exit $STATUS)"
+    exit 0
+fi
+
+TRIED=0
+TIMED_OUT=0
+SEEN=" "
+UNAUTHORIZED=""
+OFFLINE=""
+UNKNOWN=""
+FAILED_DETAIL=""
+ERROR_FILE="$(mktemp)"
+trap 'rm -f "$ERROR_FILE"' EXIT
+
+while IFS= read -r PORT; do
+    [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || continue
+    PORT=$((10#$PORT))
+    (( PORT >= 1024 && PORT <= 65535 )) || continue
+    [[ "$SEEN" == *" $PORT "* ]] && continue
+    SEEN="$SEEN$PORT "
+    (( TRIED < 8 )) || break
+    TRIED=$((TRIED + 1))
+    TARGET="127.0.0.1:$PORT"
+
+    left_seconds
+    if (( LEFT < 1 )); then
+        TIMED_OUT=1
+        break
+    fi
+    STATUS=0
+    timeout --signal=TERM --kill-after=1 "$LEFT" adb connect "$TARGET" >/dev/null 2>&1 || STATUS=$?
+    if (( STATUS == 124 || STATUS == 137 )); then
+        TIMED_OUT=1
+        continue
+    fi
+
+    left_seconds
+    if (( LEFT < 1 )); then
+        TIMED_OUT=1
+        break
+    fi
+    : > "$ERROR_FILE"
+    STATE=""
+    STATUS=0
+    STATE="$(timeout --signal=TERM --kill-after=1 "$LEFT" adb -s "$TARGET" get-state 2>"$ERROR_FILE")" || STATUS=$?
+    STDERR="$(tr '\r\n\t|' '    ' < "$ERROR_FILE")"
+    if (( STATUS == 124 || STATUS == 137 )); then
+        TIMED_OUT=1
+        continue
+    fi
+    case "$STATE" in
+        unauthorized) UNAUTHORIZED="$TARGET"; continue ;;
+        offline) OFFLINE="$TARGET"; continue ;;
+    esac
+    if (( STATUS != 0 )); then
+        FAILED_DETAIL="adb get-state failed (exit $STATUS)"
+        [[ -z "$STDERR" ]] || FAILED_DETAIL+=": $STDERR"
+        continue
+    fi
+    case "$STATE" in
+        device)
+            emit_result available "$TARGET" verified ""
+            exit 0
+            ;;
+        unauthorized) UNAUTHORIZED="$TARGET" ;;
+        offline) OFFLINE="$TARGET" ;;
+        *) UNKNOWN="${STATE:-empty}" ;;
+    esac
+done <<< "$PORTS"
+
+if [[ -n "$UNAUTHORIZED" ]]; then
+    emit_result unavailable "" unauthorized \
+        "observed unauthorized state on $UNAUTHORIZED; no pairing was attempted"
+elif [[ -n "$OFFLINE" ]]; then
+    emit_result unavailable "" offline "observed offline state on $OFFLINE"
+elif (( TIMED_OUT )); then
+    emit_result unavailable "" timeout "deadline expired before a local device was verified"
+elif [[ -n "$FAILED_DETAIL" ]]; then
+    emit_result unavailable "" probe_failed "$FAILED_DETAIL"
+elif [[ -n "$UNKNOWN" ]]; then
+    emit_result unavailable "" unknown_state \
+        "adb get-state returned unrecognized state: $UNKNOWN"
+elif (( TRIED == 0 )); then
+    emit_result unavailable "" no_service \
+        "no local connect service found; this does not prove pairing was lost"
+else
+    emit_result unavailable "" unverified \
+        "no discovered local port gave a usable ADB device ($TRIED tried)"
+fi

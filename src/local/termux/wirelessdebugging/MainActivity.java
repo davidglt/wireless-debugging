@@ -114,6 +114,12 @@ public final class MainActivity extends Activity {
     private void changeFromInterface(boolean enabled) {
         try {
             setEnabled(enabled);
+            int observed = readState();
+            if (observed != (enabled ? 1 : 0)) {
+                notifyUser("Error: setting change was not observed.");
+                refreshStatus();
+                return;
+            }
             notifyUser("System setting updated.");
         } catch (RuntimeException error) {
             notifyUser("Error: " + error.getMessage());
@@ -131,6 +137,7 @@ public final class MainActivity extends Activity {
                     "\n" + stateDescription()
                     + "\nRequired permission: "
                     + (hasWritePermission() ? "GRANTED" : "NOT GRANTED")
+                    + "\nSetting status does not verify ADB connectivity."
                     + "\n");
         } catch (RuntimeException error) {
             statusView.setText("\nStatus unavailable: "
