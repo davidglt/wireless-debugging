@@ -85,7 +85,7 @@ On the device tested, Termux required this special access:
 Settings → Apps → Special app access → Display over other apps → Termux → Allow
 ```
 
-Spanish labels include `Mostrar encima`, `Mostrar sobre otras aplicaciones` and `Aparecer encima`. Names vary by manufacturer. Grant it to Termux, not the companion app. This is separate from WRITE_SECURE_SETTINGS. It is an observed device-specific fix, not a universal guarantee.
+The setting may also be named `Appear on top`; wording varies by manufacturer and system language. Grant it to Termux, not the companion app. This is separate from WRITE_SECURE_SETTINGS. It is an observed device-specific fix, not a universal guarantee.
 
 Test launching from Termux:
 
