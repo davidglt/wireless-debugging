@@ -1,0 +1,26 @@
+# Build outputs
+/build/
+/dist/
+*.apk
+*.aab
+*.dex
+*.class
+*.idsig
+
+# Local SDK configuration
+local.properties
+
+# Signing keys and credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
+/secrets/
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*~
