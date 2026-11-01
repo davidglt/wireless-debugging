@@ -33,7 +33,7 @@ On this device, the app buttons and Termux control worked after enabling Termux'
 ## Repository layout
 
 - `AndroidManifest.xml`: package, permission, activity and control receiver declaration.
-- `src/local/termux/wirelessdebugging/MainActivity.java`: interface, credits and token creation.
+- `src/local/termux/wirelessdebugging/MainActivity.java`: main screen, token creation on first launch and the `SetupActivity`/`AboutActivity` screens (with `AppSupport` helpers).
 - `src/local/termux/wirelessdebugging/ControlReceiver.java` and `ControlProtocol.java`: token-authenticated control endpoint and its Android-independent request logic.
 - `tests/run-tests.sh`: host-side checks (see Testing).
 - `build.sh`: packaging, compilation, alignment, signing and verification.
@@ -235,7 +235,7 @@ adb shell pm grant local.termux.wirelessdebugging android.permission.WRITE_SECUR
 
 Use USB ADB from a computer or an already paired wireless ADB connection. Establish the initial connection before disabling wireless debugging. An ordinary Android permission dialog cannot grant this permission. If several devices are connected, specify the intended device with `adb -s TARGET`, as in the local pairing example above.
 
-Open the app from its launcher icon to create its token. Press `Refresh status` and verify `Required permission: GRANTED`. The buttons are `Turn ON`, `Turn OFF` and `Refresh status`.
+Open the app from its launcher icon; this creates the token if none exists. The main screen shows the current setting and permission status with `Turn ON`, `Turn OFF`, `Refresh status`, `Setup` and `About`. Press `Refresh status` and verify `Required permission: GRANTED`. `Setup` shows the permission command (with `Copy command`), Termux instructions and the control token, which stays hidden until `Show token` is pressed (`Hide token`, `Copy token` also available; opening Setup never replaces an existing token, and the screens use `FLAG_SECURE`). `About` shows the installed version (read from package metadata), author, copyright, license and project link.
 
 ## Allow Termux to open the app
 
@@ -316,7 +316,7 @@ On failure (rejected token, missing WRITE_SECURE_SETTINGS, timeout, no response,
 
 The wrapper sends an explicit ordered broadcast with `am broadcast` to `local.termux.wirelessdebugging/.ControlReceiver`, action `local.termux.wirelessdebugging.CONTROL`, and string extras `operation` (`on`, `off`, `status`, `version`), `nonce` (random 128-bit request ID) and `token`. `am start` is not used because it does not return activity output. The receiver is exported, so Termux can call it, but it validates the token (constant-time comparison) before reading or changing anything or disclosing state; unauthenticated callers only learn `error=unauthorized`. The result is returned as the broadcast result data, `wd2 nonce=<id> status=ok|error op=... setting=1|0|unknown permission=granted|denied version=<versionName> version_code=<n> [error=...]`, which `am` prints. No files or world-readable channels are used, and the token is never logged or returned. Each broadcast has its own result, so concurrent requests do not interfere, and the wrapper rejects responses whose nonce differs from its own. No root, ADB connection or extra permission is needed to obtain results. The token is passed as a process argument, visible only to the same Android user's processes at most, as before.
 
-`wireless-debugging --version` prints `App version: <versionName> (code <versionCode>)` of the installed APK without changing any setting. The app reads both values from its own package metadata (`PackageManager`), shows them with the credits in the UI, and returns them only to requests with a valid token; the script contains no version of its own. If the app cannot be contacted, answers with a different protocol (`wd1` from an older APK), or reports no version, the command fails with an error on standard error instead of printing a version.
+`wireless-debugging --version` prints `App version: <versionName> (code <versionCode>)` of the installed APK without changing any setting. The app reads both values from its own package metadata (`PackageManager`), shows them on the `About` screen, and returns them only to requests with a valid token; the script contains no version of its own. If the app cannot be contacted, answers with a different protocol (`wd1` from an older APK), or reports no version, the command fails with an error on standard error instead of printing a version.
 
 ### Testing
 
@@ -326,7 +326,7 @@ Host checks (bash, JDK; no Android needed):
 bash tests/run-tests.sh
 ```
 
-This tests `ControlProtocol` (valid status/on/off/version, invalid token, missing permission, bad operation/nonce, concurrent requests) and the wrapper against a fake `am` (same cases plus `--version`, an incompatible old-protocol app, timeout, malformed and mismatched responses, missing token file, parallel invocations). It does **not** compile `ControlReceiver`/`MainActivity` against Android, run the aapt2/d8 build, or exercise real Termux `am`; verify those on a device by running `./build.sh`, installing, then `wireless-debugging status|on|off`. Whether Termux's `am` prints `Broadcast completed: result=..., data="..."` on a given version has to be confirmed on a device.
+It also does simple source-level checks of the UI structure (buttons, token not on the main screen, `FLAG_SECURE`, non-exported screens). This tests `ControlProtocol` (valid status/on/off/version, invalid token, missing permission, bad operation/nonce, concurrent requests) and the wrapper against a fake `am` (same cases plus `--version`, an incompatible old-protocol app, timeout, malformed and mismatched responses, missing token file, parallel invocations). It does **not** compile `ControlReceiver`/`MainActivity` against Android, run the aapt2/d8 build, or exercise real Termux `am`; verify those on a device by running `./build.sh`, installing, then `wireless-debugging status|on|off`. Whether Termux's `am` prints `Broadcast completed: result=..., data="..."` on a given version has to be confirmed on a device.
 
 ## Example: reboot this phone over wireless ADB
 

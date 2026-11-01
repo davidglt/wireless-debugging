@@ -35,6 +35,15 @@
 
         </activity>
 
+        <activity
+            android:name=".SetupActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false" />
+
         <!-- Exported so Termux can call it; every request needs the private token. -->
         <receiver
             android:name=".ControlReceiver"

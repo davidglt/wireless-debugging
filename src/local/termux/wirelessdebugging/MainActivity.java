@@ -8,19 +8,15 @@ package local.termux.wirelessdebugging;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import java.security.SecureRandom;
 
 public final class MainActivity extends Activity {
     static final String SETTING = "adb_wifi_enabled";
@@ -28,13 +24,18 @@ public final class MainActivity extends Activity {
     static final String TOKEN_KEY = "control_token";
 
     private TextView statusView;
-    private TextView tokenView;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+
+        try {
+            AppSupport.getOrCreateToken(this);
+        } catch (RuntimeException error) {
+            notifyUser("Error: " + error.getMessage());
+        }
 
         showInterface();
     }
@@ -43,36 +44,6 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshStatus();
-    }
-
-    private SharedPreferences preferences() {
-        return getSharedPreferences(PREFS, MODE_PRIVATE);
-    }
-
-    private String getOrCreateToken() {
-        String token = preferences().getString(TOKEN_KEY, null);
-
-        if (token == null) {
-            token = createToken();
-
-            if (!preferences().edit().putString(TOKEN_KEY, token).commit()) {
-                throw new IllegalStateException("Could not save control token.");
-            }
-        }
-
-        return token;
-    }
-
-    private String createToken() {
-        byte[] bytes = new byte[32];
-        new SecureRandom().nextBytes(bytes);
-
-        StringBuilder result = new StringBuilder(64);
-        for (byte value : bytes) {
-            result.append(Character.forDigit((value >>> 4) & 15, 16));
-            result.append(Character.forDigit(value & 15, 16));
-        }
-        return result.toString();
     }
 
     private boolean hasWritePermission() {
@@ -111,87 +82,33 @@ public final class MainActivity extends Activity {
     }
 
     private void showInterface() {
-        int padding = Math.round(
-                20 * getResources().getDisplayMetrics().density);
+        int padding = AppSupport.dp(this, 20);
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(padding, padding, padding, padding);
 
-        TextView title = new TextView(this);
-        title.setText("Wireless Debugging");
+        TextView title = AppSupport.addText(
+                this, layout, "Wireless Debugging", false);
         title.setTextSize(24);
-        layout.addView(title);
 
-        statusView = new TextView(this);
-        layout.addView(statusView);
+        statusView = AppSupport.addText(this, layout, "", false);
 
-        addButton(layout, "Turn ON", () -> changeFromInterface(true));
-        addButton(layout, "Turn OFF", () -> changeFromInterface(false));
-        addButton(layout, "Refresh status", this::refreshStatus);
-
-        TextView instructions = new TextView(this);
-        instructions.setText(
-                "\nGrant the required permission once using ADB:\n\n"
-                + "adb shell pm grant local.termux.wirelessdebugging "
-                + "android.permission.WRITE_SECURE_SETTINGS\n\n"
-                + "Control token — keep it private:\n");
-        instructions.setTextIsSelectable(true);
-        layout.addView(instructions);
-
-        tokenView = new TextView(this);
-        tokenView.setTextIsSelectable(true);
-        layout.addView(tokenView);
-
-        try {
-            tokenView.setText(getOrCreateToken());
-        } catch (RuntimeException error) {
-            tokenView.setText("Error: " + error.getMessage());
-        }
-
-        TextView warning = new TextView(this);
-        warning.setText(
-                "\nThe token authorizes external control of this app.\n"
-                + "Do not publish it or commit it to Git.\n\n"
-                + "Android may still require network approval.\n"
-                + "An ON setting does not guarantee that ADB is reachable.");
-        layout.addView(warning);
-
-        TextView credits = new TextView(this);
-        credits.setText(
-                "\n\nCredits\n"
-                + "Wireless Debugging\n"
-                + "Author: David González López-Tercero\n"
-                + "Copyright (C) 2026 David González López-Tercero\n"
-                + "License: GNU GPL v3 or later\n"
-                + "Version: " + installedVersion());
-        credits.setTextIsSelectable(true);
-        layout.addView(credits);
+        AppSupport.addButton(this, layout, "Turn ON",
+                () -> changeFromInterface(true));
+        AppSupport.addButton(this, layout, "Turn OFF",
+                () -> changeFromInterface(false));
+        AppSupport.addButton(this, layout, "Refresh status", this::refreshStatus);
+        AppSupport.addButton(this, layout, "Setup", () ->
+                startActivity(new Intent(this, SetupActivity.class)));
+        AppSupport.addButton(this, layout, "About", () ->
+                startActivity(new Intent(this, AboutActivity.class)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(layout);
         setContentView(scroll);
 
         refreshStatus();
-    }
-
-    private String installedVersion() {
-        try {
-            PackageInfo info = getPackageManager().getPackageInfo(
-                    getPackageName(), 0);
-            return info.versionName + " (code " + info.getLongVersionCode()
-                    + ")";
-        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
-            return "unavailable";
-        }
-    }
-
-    private void addButton(
-            LinearLayout layout, String label, Runnable action) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setOnClickListener(view -> action.run());
-        layout.addView(button);
     }
 
     private void changeFromInterface(boolean enabled) {

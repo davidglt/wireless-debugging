@@ -15,7 +15,6 @@ package local.termux.wirelessdebugging;
  */
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 
 public final class FakeAm {
     public static void main(String[] args) throws Exception {
@@ -72,9 +71,12 @@ public final class FakeAm {
 
             public boolean writeSetting(boolean enabled) {
                 try {
-                    Files.write(state, (enabled ? "1" : "0").getBytes(),
-                            StandardOpenOption.CREATE,
-                            StandardOpenOption.TRUNCATE_EXISTING);
+                    java.nio.file.Path tmp = Files.createTempFile(
+                            state.toAbsolutePath().getParent(), "st", ".tmp");
+                    Files.write(tmp, (enabled ? "1" : "0").getBytes());
+                    Files.move(tmp, state,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     return true;
                 } catch (Exception e) {
                     return false;

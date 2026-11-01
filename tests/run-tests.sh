@@ -19,6 +19,29 @@ javac -encoding UTF-8 -d "$WORK/classes" \
     "$ROOT/tests/FakeAm.java"
 java -cp "$WORK/classes" local.termux.wirelessdebugging.ControlProtocolTest
 
+# Source-level UI checks (text/structure only; not a compile or device test).
+UI="$PKG/MainActivity.java"
+FAILED_UI=0
+ui_check() { # description, condition result
+    if ! "${@:2}"; then echo "FAIL: UI: $1" >&2; FAILED_UI=1; else echo "ok: UI: $1"; fi
+}
+for LABEL in 'Turn ON' 'Turn OFF' 'Refresh status' 'Setup' 'About'; do
+    ui_check "main screen has $LABEL" grep -q "\"$LABEL\"" "$UI"
+done
+ui_check 'main screen does not read or show the token' \
+    bash -c '! grep -Eqi "tokenView|Control token|pm grant|getOrCreateToken\(this\)\.|Show token" "$1"' _ "$UI"
+ui_check 'setup hides token initially and has show/hide/copy' \
+    grep -Eq '"Show token"' "$PKG/SetupActivity.java"
+ui_check 'setup uses FLAG_SECURE' grep -q FLAG_SECURE "$PKG/SetupActivity.java"
+ui_check 'main keeps FLAG_SECURE' grep -q FLAG_SECURE "$UI"
+ui_check 'about has attribution and link' \
+    grep -q 'License: GNU GPL v3 or later' "$PKG/AboutActivity.java"
+ui_check 'no token logging' \
+    bash -c '! grep -Eq "Log\.|System\.(out|err)" "$1"/*Activity.java "$1"/AppSupport.java "$1"/ControlReceiver.java' _ "$PKG"
+ui_check 'setup/about declared non-exported' \
+    bash -c '[[ "$(grep -c "exported=\"false\"" "$1")" == 2 ]]' _ "$ROOT/AndroidManifest.xml"
+(( FAILED_UI == 0 )) || exit 1
+
 mkdir -p "$WORK/bin" "$WORK/home/.config/wireless-debugging"
 cat > "$WORK/bin/am" <<AM
 #!/usr/bin/env bash
@@ -92,7 +115,7 @@ for N in 1 2 3 4 5 6 7 8; do
     PIDS+=($!)
 done
 for PID in "${PIDS[@]}"; do
-    wait "$PID" || { echo "FAIL: concurrent request exit" >&2; FAILED=1; }
+    wait "$PID" || { echo "FAIL: concurrent request exit" >&2; cat "$WORK"/err.* >&2; FAILED=1; }
 done
 for N in 1 2 3 4 5 6 7 8; do
     grep -q 'Result: success' "$WORK/out.$N" \
