@@ -34,8 +34,21 @@ ui_check 'setup hides token initially and has show/hide/copy' \
     grep -Eq '"Show token"' "$PKG/SetupActivity.java"
 ui_check 'setup uses FLAG_SECURE' grep -q FLAG_SECURE "$PKG/SetupActivity.java"
 ui_check 'main keeps FLAG_SECURE' grep -q FLAG_SECURE "$UI"
-ui_check 'about has attribution and link' \
-    grep -q 'License: GNU GPL v3 or later' "$PKG/AboutActivity.java"
+ABOUT="$PKG/AboutActivity.java"
+ui_check 'about has license line' grep -q 'License: ' "$ABOUT"
+ui_check 'about has clickable GPL link text' \
+    bash -c 'grep -q "GNU GPL v3 or later" "$1" && grep -q ClickableSpan "$1"' _ "$ABOUT"
+ui_check 'about copyright line' grep -q 'Copyright \\u00a9 2026 David Gonz' "$ABOUT"
+ui_check 'about has Repository and Close buttons' \
+    bash -c 'grep -q "\"Repository\"" "$1" && grep -q "\"Close\"" "$1"' _ "$ABOUT"
+ui_check 'about has no Author line, old button or plain URL text' \
+    bash -c '! grep -Eq "\\nAuthor: |Open project page|\" *\+ *AppSupport.PROJECT_URL" "$1"' _ "$ABOUT"
+ui_check 'about uses installedVersion' grep -q 'AppSupport.installedVersion' "$ABOUT"
+ui_check 'about reads bundled license asset' grep -q 'getAssets().open' "$ABOUT"
+ui_check 'build.sh bundles LICENSE as asset' \
+    bash -c 'grep -q "LICENSE.txt" "$1" && grep -q -- "-A \"\$BUILD/assets\"" "$1"' _ "$ROOT/build.sh"
+ui_check 'LICENSE is the GPL v3 text' \
+    bash -c 'head -2 "$1" | grep -q "GNU GENERAL PUBLIC LICENSE" && grep -q "^END OF TERMS AND CONDITIONS" "$1"' _ "$ROOT/LICENSE"
 ui_check 'no token logging' \
     bash -c '! grep -Eq "Log\.|System\.(out|err)" "$1"/*Activity.java "$1"/AppSupport.java "$1"/ControlReceiver.java' _ "$PKG"
 ui_check 'setup/about declared non-exported' \
