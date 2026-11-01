@@ -141,10 +141,22 @@ Archive validity alone does not establish the API level or authenticity; use a t
 git clone https://github.com/davidglt/wireless-debugging.git
 cd wireless-debugging
 bash build.sh
-termux-open --view --content-type application/vnd.android.package-archive dist/wireless-debugging.apk
 ```
 
-Allow installation from the source Android identifies if prompted, then confirm installation. Alternatively, transfer the APK to a computer and run `adb install -r wireless-debugging.apk`.
+Install or update the companion APK with `adb`, not with `termux-open` or the Android package installer. `TARGET` must be the actual serial or `IP:PORT` of an authorized target that `adb -s TARGET get-state` reports as `device`:
+
+```sh
+adb -s TARGET get-state
+adb -s TARGET install -r dist/wireless-debugging.apk
+```
+
+`-r` reinstalls over an existing installation and preserves its app data (including the control token and granted permission) when the new APK uses the same signing identity. An APK signed with a different identity will not update the installed app.
+
+**Bootstrap.** The initial installation needs an already authorized USB or wireless ADB connection that you establish independently (see [Initial wireless ADB pairing from Termux](#initial-wireless-adb-pairing-from-termux) or use a computer). `wireless-debugging on` is not required, and cannot be used, before the app is installed and granted its permission.
+
+**From a computer (USB or network).** Run the commands above on the computer with its own copy of the APK path and the device's actual serial or IP address and port. Do not use `127.0.0.1` there; a computer's loopback is the computer, not the phone. Use `adb devices -l` to find the target.
+
+**From Termux on the same phone.** Needs the `adb` client from `pkg install android-tools` and an authorized local connection (see the pairing section). For later updates, once the app is installed and permitted, `wireless-debugging on` can discover and verify the current loopback target; its output reports the actual `ADB target: 127.0.0.1:PORT`. Wireless debugging uses a dynamic connection port that changes, so use the port reported by that command (or shown in Developer options) as `TARGET`; never assume 5555 or reuse an example port.
 
 The build verifies alignment and signatures. It creates a local signing key and password outside the repository:
 
@@ -357,7 +369,7 @@ Exit statuses: `on`, `off`, `status` and `--version` exit 0 when the app operati
 
 On app failure (rejected token, missing WRITE_SECURE_SETTINGS, app-request timeout, no response, mismatched response) the message goes to standard error and the exit status is nonzero.
 
-**Update after upgrading.** Reinstall the APK (`adb install -r dist/wireless-debugging.apk` or the `termux-open` method above; the signing key is unchanged so the token and permission are kept) and reinstall both scripts with the `install -m 700` commands above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
+**Update after upgrading.** Reinstall the APK (`adb -s TARGET install -r dist/wireless-debugging.apk` as described in [Build and install the app](#build-and-install-the-app); with an unchanged signing identity the token and permission are kept) and reinstall both scripts with the `install -m 700` commands above (to `$HOME/bin`). Open the app once after installing; a force-stopped app does not receive broadcasts. The old script and the new APK are not compatible.
 
 ### Control interface
 
