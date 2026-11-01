@@ -52,7 +52,7 @@ public final class SetupActivity extends Activity {
         AppSupport.addText(this, layout,
                 "\n2. Configure the Termux command:\n"
                 + "Install scripts/wireless-debugging from the project into "
-                + "$PREFIX/bin, then save the control token below to "
+                + "$HOME/bin, then save the control token below to "
                 + "~/.config/wireless-debugging/token (mode 600) using the "
                 + "README instructions. Termux also needs the Display over "
                 + "other apps special access.\n\n"
